@@ -12,18 +12,18 @@ public:
         InstructionHeading = 1,
         InstructionTailing = 2,
         InstructionOverlapped = 3, // The byte was executed with differing instruction base addresses
-        DataByte,  // This and the following is not implemented yet.
-        DataWord,
-        DataDWord,
-        DataQWord,
-        DataFloat,
-        DataDouble,
-        DataLongDouble,
-        DataXMM,
-        DataYMM,
-        DataMMX,
-        DataMixed, //the byte is accessed in multiple ways
-        InstructionDataMixed //the byte is both executed and written
+        DataByte = 4,  // This and the following is not implemented yet.
+        DataWord = 5,
+        DataDWord = 6,
+        DataQWord = 7,
+        DataFloat = 8,
+        DataDouble = 9,
+        DataLongDouble = 10,
+        DataXMM = 11,
+        DataYMM = 12,
+        DataMMX = 13,
+        DataMixed = 14, //the byte is accessed in multiple ways
+        InstructionDataMixed = 15 //the byte is both executed and written
     };
 
     /***************************************************************
@@ -32,6 +32,7 @@ public:
      * TraceRecordBitExec: single-bit, executed.
      * TraceRecordByteWithExecTypeAndCounter: 8-bit, YYXXXXXX YY:=TraceRecordByteType_2bit, XXXXXX:=Hit count(6bit)
      * TraceRecordWordWithExecTypeAndCounter: 16-bit, YYXXXXXX XXXXXXXX YY:=TraceRecordByteType_2bit, XX:=Hit count(14bit)
+     * TraceRecordWordWithAccessTypeAndAddr: 32-bit, YYYYXXXX  XXZZZZZZ PPPPPPPP PPPPPPPP YYYY:=TraceRecordByteType_4bit, XXXXXX:=Access Count(6bit), ZZZZZZ:=Write Count(6bit), PPPPPPPP PPPPPPPP:=RVA Of Last Visited Instruction
      * Other: reserved for future expanding
      **************************************************************/
     enum TraceRecordType
@@ -39,7 +40,16 @@ public:
         TraceRecordNone,
         TraceRecordBitExec,
         TraceRecordByteWithExecTypeAndCounter,
-        TraceRecordWordWithExecTypeAndCounter
+        TraceRecordWordWithExecTypeAndCounter,
+        TraceRecordWordWithAccessTypeAndAddr
+    };
+
+    struct TraceRecordRunTraceInfo
+    {
+        bool Enabled;
+        bool TID;
+        bool PID; // Reserved for future multi-process tracing
+        bool CodeBytes;
     };
 
     TraceRecordManager();
@@ -71,6 +81,7 @@ private:
     {
         void* rawPtr;
         duint rva;
+        TraceRecordRunTraceInfo runTraceInfo;
         TraceRecordType dataType;
         unsigned int moduleIndex;
     };
