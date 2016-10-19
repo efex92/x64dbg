@@ -10,6 +10,8 @@ TraceRecordManager TraceRecord;
 TraceRecordManager::TraceRecordManager() : instructionCounter(0)
 {
     ModuleNames.emplace_back("");
+    mRunTraceFile = NULL;
+    memset(mRunTraceFileName, 0, sizeof(mRunTraceFileName));
 }
 
 TraceRecordManager::~TraceRecordManager()
@@ -25,6 +27,8 @@ void TraceRecordManager::clear()
     TraceRecord.clear();
     ModuleNames.clear();
     ModuleNames.emplace_back("");
+    // Stop run trace
+    createTraceRecordFile(nullptr);
 }
 
 bool TraceRecordManager::setTraceRecordType(duint pageAddress, TraceRecordType type)
@@ -125,6 +129,8 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
     isMixed = false;
     switch(pageInfo.dataType)
     {
+    case TraceRecordType::TraceRecordNone:
+        break;
     case TraceRecordType::TraceRecordBitExec:
         for(unsigned char i = 0; i < size; i++)
             *((char*)pageInfo.rawPtr + (i + offset) / 8) |= 1 << ((i + offset) % 8);
@@ -133,15 +139,15 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
     case TraceRecordType::TraceRecordByteWithExecTypeAndCounter:
         for(unsigned char i = 0; i < size; i++)
         {
-            TraceRecordByteType_2bit currentByteType;
+            TraceRecordByteType currentByteType;
             if(isMixed)
-                currentByteType = TraceRecordByteType_2bit::_InstructionOverlapped;
+                currentByteType = TraceRecordByteType::InstructionOverlapped;
             else if(i == 0)
-                currentByteType = TraceRecordByteType_2bit::_InstructionHeading;
+                currentByteType = TraceRecordByteType::InstructionHeading;
             else if(i == size - 1)
-                currentByteType = TraceRecordByteType_2bit::_InstructionTailing;
+                currentByteType = TraceRecordByteType::InstructionTailing;
             else
-                currentByteType = TraceRecordByteType_2bit::_InstructionBody;
+                currentByteType = TraceRecordByteType::InstructionBody;
 
             char* data = (char*)pageInfo.rawPtr + offset + i;
             if(*data == 0)
@@ -162,15 +168,15 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
     case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
         for(unsigned char i = 0; i < size; i++)
         {
-            TraceRecordByteType_2bit currentByteType;
+            TraceRecordByteType currentByteType;
             if(isMixed)
-                currentByteType = TraceRecordByteType_2bit::_InstructionOverlapped;
+                currentByteType = TraceRecordByteType::InstructionOverlapped;
             else if(i == 0)
-                currentByteType = TraceRecordByteType_2bit::_InstructionHeading;
+                currentByteType = TraceRecordByteType::InstructionHeading;
             else if(i == size - 1)
-                currentByteType = TraceRecordByteType_2bit::_InstructionTailing;
+                currentByteType = TraceRecordByteType::InstructionTailing;
             else
-                currentByteType = TraceRecordByteType_2bit::_InstructionBody;
+                currentByteType = TraceRecordByteType::InstructionBody;
 
             short* data = (short*)pageInfo.rawPtr + offset + i;
             if(*data == 0)
@@ -188,8 +194,60 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
                 *((short*)pageInfo.rawPtr + i + offset) |= 0xC000;
         break;
 
+    case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+    {
+        char byteType = 0;
+        for(unsigned char i = 0; i < size; i++)
+        {
+            TraceRecordByteType currentByteType;
+            if(byteType == 2)
+                currentByteType = TraceRecordByteType::InstructionDataMixed;
+            else if(byteType == 1)
+                currentByteType = TraceRecordByteType::InstructionOverlapped;
+            else if(i == 0)
+                currentByteType = TraceRecordByteType::InstructionHeading;
+            else if(i == size - 1)
+                currentByteType = TraceRecordByteType::InstructionTailing;
+            else
+                currentByteType = TraceRecordByteType::InstructionBody;
+
+            unsigned int* data = (unsigned int*)pageInfo.rawPtr + offset + i;
+            unsigned int* data_ip;
+#ifdef _WIN64 // RIP is 64-bit, needs four words to store RIP
+            data_ip = (unsigned int*)pageInfo.rawPtr + offset + i;
+#else //x86, EIP is 32-bit, needs 2 words to store EIP
+            data_ip = (unsigned int*)pageInfo.rawPtr + offset + i;
+#endif //x86
+            //TODO
+        }
+    }
+    break;
+
     default:
         break;
+    }
+
+    if(pageInfo.runTraceInfo.Enabled && mRunTraceFile != NULL)
+    {
+        /*
+        Data format:
+        (4 or 2bit:message type)
+        {00:Trace entry,1000:Registers dump,1001:Modules dump,1010:Threads dump,1011:User modification, 11xx and 01:Reserved}
+        If message type is Trace entry:
+        {
+        define type PtrSize as 2-bit {00:0 bytes, 01:1 byte, 10:4 bytes, 11:8 bytes}
+        (PtrSize sizeOfIP)(PtrSize sizeOfTID)(PtrSize sizeOfOperands)(4bit code byte size)(4bit operand count)
+        (code bytes)
+        (sizeOfOperands sizeOfOperands)
+        (2bit operandtype:{00 register 01 memory(32-bit address) 10 memory(64-bit address) 11 reserved)
+        (1bit type:{0 old 1 new})(3bit operandsize:{000 1byte 001 2byte 010 4byte 011 8byte 100 16byte 101 32byte 110 (32-bit size) 111 (64-bit size))
+        (2bit reserved)
+        (DWORD operand name) or (DWORD/QWORD memory address)
+        (optional sizeOfMemoryOperand)
+        (n-byte operand value)
+        operand name is defined like FourCC, such as '\0\0AL','\0EAX','\0RAX','XMM0'~'XM15','YMM0'~'YM15','\0ST0'~'\0ST7','\0EFL','\0RFL'
+        }
+        */
     }
 }
 
@@ -212,6 +270,8 @@ unsigned int TraceRecordManager::getHitCount(duint address)
             return ((char*)pageInfo.rawPtr)[offset] & 0x3F;
         case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
             return ((short*)pageInfo.rawPtr)[offset] & 0x3FFF;
+        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+            return ((unsigned int*)pageInfo.rawPtr)[offset] & 0x0FC00000 >> 22;
         default:
             return 0;
         }
@@ -251,7 +311,6 @@ void TraceRecordManager::saveToDb(JSON root)
 {
     EXCLUSIVE_ACQUIRE(LockTraceRecord);
     const JSON jsonTraceRecords = json_array();
-    const char* byteToHex = "0123456789ABCDEF";
     for(auto i : TraceRecord)
     {
         JSON jsonObj = json_object();
@@ -354,6 +413,39 @@ void TraceRecordManager::loadFromDb(JSON root)
     }
 }
 
+bool TraceRecordManager::createTraceRecordFile(const char* fileName)
+{
+    // Acquire the lock
+    EXCLUSIVE_ACQUIRE(LockTraceRecord);
+    if(fileName != nullptr)
+    {
+        HANDLE mRunTraceFile2; // Don't terminate current run trace session if failed to create the new trace record file.
+        // Create a new file to store run trace data
+        mRunTraceFile2 = CreateFileW(StringUtils::Utf8ToUtf16(fileName).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        // Fail if file creation fails
+        if(mRunTraceFile2 == INVALID_HANDLE_VALUE)
+            return false;
+        // Close previous handle if already open
+        if(mRunTraceFile != NULL)
+            CloseHandle(mRunTraceFile);
+        mRunTraceFile = mRunTraceFile2;
+        strcpy_s(mRunTraceFileName, fileName);
+        //Initialize run trace states
+        mRunTraceLastIP = 0;
+        mRunTraceLastTID = 0;
+    }
+    else
+    {
+        // fileName is NULL. Stop run trace.
+        if(mRunTraceFile != NULL)
+        {
+            memset(mRunTraceFileName, 0, sizeof(mRunTraceFileName));
+            CloseHandle(mRunTraceFile);
+            mRunTraceFile = NULL;
+        }
+    }
+}
+
 unsigned int TraceRecordManager::getModuleIndex(const String & moduleName)
 {
     auto iterator = std::find(ModuleNames.begin(), ModuleNames.end(), moduleName);
@@ -405,4 +497,9 @@ bool _dbg_dbgsetTraceRecordType(duint pageAddress, TRACERECORDTYPE type)
 TRACERECORDTYPE _dbg_dbggetTraceRecordType(duint pageAddress)
 {
     return (TRACERECORDTYPE)TraceRecord.getTraceRecordType(pageAddress);
+}
+
+bool _dbg_dbgcreateTraceRecordFile(const char* fileName)
+{
+    return TraceRecord.createTraceRecordFile(fileName);
 }

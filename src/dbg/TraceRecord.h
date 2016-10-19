@@ -32,7 +32,7 @@ public:
      * TraceRecordBitExec: single-bit, executed.
      * TraceRecordByteWithExecTypeAndCounter: 8-bit, YYXXXXXX YY:=TraceRecordByteType_2bit, XXXXXX:=Hit count(6bit)
      * TraceRecordWordWithExecTypeAndCounter: 16-bit, YYXXXXXX XXXXXXXX YY:=TraceRecordByteType_2bit, XX:=Hit count(14bit)
-     * TraceRecordWordWithAccessTypeAndAddr: 32-bit, YYYYXXXX  XXZZZZZZ PPPPPPPP PPPPPPPP YYYY:=TraceRecordByteType_4bit, XXXXXX:=Access Count(6bit), ZZZZZZ:=Write Count(6bit), PPPPPPPP PPPPPPPP:=RVA Of Last Visited Instruction
+     * TraceRecordDWordWithAccessTypeAndAddr: 32-bit, YYYYXXXX  XXZZZZZZ PPPPPPPP PPPPPPPP YYYY:=TraceRecordByteType_4bit, XXXXXX:=Access Count(6bit), ZZZZZZ:=Write Count(6bit), PPPPPPPP PPPPPPPP:=RVA Of Last Visited Instruction
      * Other: reserved for future expanding
      **************************************************************/
     enum TraceRecordType
@@ -41,7 +41,7 @@ public:
         TraceRecordBitExec,
         TraceRecordByteWithExecTypeAndCounter,
         TraceRecordWordWithExecTypeAndCounter,
-        TraceRecordWordWithAccessTypeAndAddr
+        TraceRecordDWordWithAccessTypeAndAddr
     };
 
     struct TraceRecordRunTraceInfo
@@ -58,9 +58,14 @@ public:
 
     bool setTraceRecordType(duint pageAddress, TraceRecordType type);
     TraceRecordType getTraceRecordType(duint pageAddress);
+    bool createTraceRecordFile(const char* fileName);
 
     void TraceExecute(duint address, duint size);
-    //void TraceAccess(duint address, unsigned char size, TraceRecordByteType accessType);
+    void TraceAccess(duint address, unsigned char size, TraceRecordByteType accessType);
+    void TraceModuleLoad(const char* moduleName, duint base);
+    void TraceModuleUnload(const char* moduleName, duint base);
+    void TraceThreadCreate(duint TID);
+    void TraceThreadExit(duint TID, duint ExitCode);
 
     unsigned int getHitCount(duint address);
     TraceRecordByteType getByteType(duint address);
@@ -68,14 +73,13 @@ public:
 
     void saveToDb(JSON root);
     void loadFromDb(JSON root);
+
+    HANDLE mRunTraceFile;
+    char mRunTraceFileName[MAX_PATH];
+    duint mRunTraceLastTID;
+    duint mRunTraceLastIP;
+
 private:
-    enum TraceRecordByteType_2bit
-    {
-        _InstructionBody = 0,
-        _InstructionHeading = 1,
-        _InstructionTailing = 2,
-        _InstructionOverlapped = 3
-    };
 
     struct TraceRecordPage
     {
@@ -101,5 +105,6 @@ unsigned int _dbg_dbggetTraceRecordHitCount(duint address);
 TRACERECORDBYTETYPE _dbg_dbggetTraceRecordByteType(duint address);
 bool _dbg_dbgsetTraceRecordType(duint pageAddress, TRACERECORDTYPE type);
 TRACERECORDTYPE _dbg_dbggetTraceRecordType(duint pageAddress);
+bool _dbg_dbgcreateTraceRecordFile(const char* fileName);
 
 #endif // TRACERECORD_H
