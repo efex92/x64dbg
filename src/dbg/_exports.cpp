@@ -32,6 +32,7 @@
 #include "argument.h"
 #include "watch.h"
 #include "animate.h"
+#include "TraceRecord.h"
 
 static bool bOnlyCipAutoComments = false;
 static duint cacheCflags = 0;
@@ -247,7 +248,7 @@ extern "C" DLL_EXPORT bool _dbg_addrinfoget(duint addr, SEGMENTREG segment, ADDR
                     len--;
                 if(len)
                     len++;
-                comment = StringUtils::sprintf("%s:%u", StringUtils::Utf16ToUtf8(filename + len), line.LineNumber);
+                comment = StringUtils::sprintf("%s:%u", StringUtils::Utf16ToUtf8(filename + len).c_str(), line.LineNumber);
                 retval = true;
             }
             if(!bOnlyCipAutoComments || addr == GetContextDataEx(hActiveThread, UE_CIP)) //no line number
@@ -1269,6 +1270,15 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
     case DBG_GET_WATCH_LIST:
     {
         BridgeList<WATCHINFO>::CopyData((ListInfo*)param1, WatchGetList());
+    }
+    break;
+
+    case DBG_SELCHANGED:
+    {
+        PLUG_CB_SELCHANGED plugSelChanged;
+        plugSelChanged.hWindow = (int)param1;
+        plugSelChanged.VA = (duint)param2;
+        plugincbcall(CB_SELCHANGED, &plugSelChanged);
     }
     break;
 
