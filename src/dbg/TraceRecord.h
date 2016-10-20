@@ -60,7 +60,7 @@ public:
     TraceRecordType getTraceRecordType(duint pageAddress);
     bool createTraceRecordFile(const char* fileName);
 
-    void TraceExecute(duint address, duint size);
+    void TraceExecute(duint address, size_t size, Capstone* instruction);
     void TraceAccess(duint address, unsigned char size, TraceRecordByteType accessType);
     void TraceModuleLoad(const char* moduleName, duint base);
     void TraceModuleUnload(const char* moduleName, duint base);
@@ -105,7 +105,10 @@ private:
             duint newValue;
             char* newValuePtr;
         };
+        char* serialize();
     };
+
+    static DWORD CapstoneRegToTraceRecordName(x86_reg reg);
 
     //Key := page base, value := trace record raw data
     std::unordered_map<duint, TraceRecordPage> TraceRecord;
