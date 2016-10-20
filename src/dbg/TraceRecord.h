@@ -90,6 +90,23 @@ private:
         unsigned int moduleIndex;
     };
 
+    struct TraceRecordOperand
+    {
+        DWORD registerName;
+        duint memoryAddress;
+        size_t operandSize;
+        union
+        {
+            duint oldValue;
+            char* oldValuePtr;
+        };
+        union
+        {
+            duint newValue;
+            char* newValuePtr;
+        };
+    };
+
     //Key := page base, value := trace record raw data
     std::unordered_map<duint, TraceRecordPage> TraceRecord;
     std::vector<std::string> ModuleNames;
