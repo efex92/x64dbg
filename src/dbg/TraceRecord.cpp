@@ -1,9 +1,7 @@
 #include "TraceRecord.h"
-#include "capstone_wrapper.h"
 #include "module.h"
 #include "memory.h"
 #include "threading.h"
-#include "debugger.h"
 #include "thread.h"
 #include "plugin_loader.h"
 
@@ -108,7 +106,7 @@ TraceRecordManager::TraceRecordType TraceRecordManager::getTraceRecordType(duint
         return pageInfo->second.dataType;
 }
 
-void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* instruction)
+void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* instruction, unsigned char* instructionDump)
 {
     SHARED_ACQUIRE(LockTraceRecord);
     if(size == 0)
@@ -124,8 +122,8 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
     if((offset + size) > 4096) // execution crossed page boundary, splitting into 2 sub calls. Noting that byte type may be mislabelled.
     {
         SHARED_RELEASE();
-        TraceExecute(address, 4096 - offset, nullptr);
-        TraceExecute(base + 4096, size + offset - 4096, nullptr);
+        TraceExecute(address, 4096 - offset, instruction, instructionDump);
+        TraceExecute(base + 4096, size + offset - 4096, nullptr, nullptr);
         return;
     }
     isMixed = false;
@@ -241,14 +239,14 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         (PtrSize sizeOfIP)(1bit TID Presence)(1bit PID Presence)(PtrSize sizeOfOperands) (4bit code byte size)(4bit operand count)
         (IP)(TID)(PID)
         (code bytes)
-        (sizeOfOperands sizeOfOperands)
+        (sizeOfOperands sizeOfOperands) //maximum size till here is 42 bytes
         (2bit operandtype:{00 register 01 memory(32-bit address) 10 memory(64-bit address) 11 reserved)
         (1bit type:{0 old 1 new})(3bit operandsize:{000 1byte 001 2byte 010 4byte 011 8byte 100 16byte 101 32byte 110 (32-bit size) 111 (64-bit size))
         (2bit reserved)
-        (DWORD operand name) or (DWORD/QWORD memory address)
+        (2byte operand name) or (DWORD/QWORD memory address)
         (optional sizeOfMemoryOperand)
         (n-byte operand value)
-        operand name is defined like FourCC, such as '\0\0AL','\0EAX','\0RAX','XMM0'~'XM15','YMM0'~'YM15','\0ST0'~'\0ST7','\0EFL','\0RFL'
+        operand name is defined like two characters to save storage space.
         }
         */
         TITAN_ENGINE_CONTEXT_t context;
@@ -260,9 +258,14 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         if(GetFullContextDataEx(hActiveThread, &context) && instruction->RegsAccess(regRead, &regReadCount, regWrite, &regWriteCount))
         {
             dsint relativeIP = address - mRunTraceLastIP;
-            unsigned char buffer[256];
+            unsigned char buffer[672];
+            unsigned char operandsBuffer[620];
+            unsigned int operandsSize = 0;
             unsigned char* bufferPtr = buffer;
+            unsigned char i;
             memset(buffer, 0, sizeof(buffer));
+            memset(operandsBuffer, 0, sizeof(operandsBuffer));
+            // save IP
             if((relativeIP >= -0x80 && relativeIP <= 0x7f) && relativeIP != 0)
             {
                 buffer[0] |= 0x10;
@@ -289,6 +292,7 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
                 bufferPtr += 8;
             }
 #endif //_WIN64
+            // save TID if enabled
             if(TID != mRunTraceLastTID && pageInfo.runTraceInfo.TID)
             {
                 // always store TID in 4 bytes
@@ -296,8 +300,19 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
                 *(unsigned int*)bufferPtr = TID;
                 bufferPtr += 4;
             }
-            // store PID here, but this program cannot debug child process right now.
-
+            // store PID here, but this program cannot debug child process right now. PID is always 4 bytes
+            // save code bytes if enabled
+            if(pageInfo.runTraceInfo.CodeBytes)
+            {
+                buffer[1] = (instruction->Size() & 0x0F) << 4;
+                memcpy(bufferPtr, instructionDump, instruction->Size());
+                bufferPtr += instruction->Size();
+            }
+            // save operand count
+            buffer[1] |= (regReadCount + regWriteCount) & 0x0F;
+            for(i = 0; i < regReadCount; i++)
+            {
+            }
         }
         mRunTraceLastIP = address + instruction->Size();
         mRunTraceLastTID = TID;
@@ -511,500 +526,694 @@ unsigned int TraceRecordManager::getModuleIndex(const String & moduleName)
     }
 }
 
+#define MakeRegisterCode(A, B) ((A) << 16 | (B))
 
-DWORD TraceRecordManager::CapstoneRegToTraceRecordName(x86_reg reg)
+unsigned short TraceRecordManager::CapstoneRegToTraceRecordName(x86_reg reg)
 {
     switch(reg)
     {
+    case X86_REG_CS:
+        return MakeRegisterCode('c', 's'); //'cs'
+    case X86_REG_DS:
+        return MakeRegisterCode('d', 's'); //'ds'
     case X86_REG_EFLAGS:
-        return 'F' << 24 | 'L' << 16 | 'A' << 8 | 'G'; // 'FLAG'
+        return MakeRegisterCode('F', 'L'); //'FL'
+#ifdef _WIN64
+    case X86_REG_RIP:
+#endif //_WIN64
+    case X86_REG_EIP:
+    case X86_REG_IP:
+        return MakeRegisterCode('I', 'P'); //'IP'
+    case X86_REG_EIZ:
+    case X86_REG_RIZ:
+        return MakeRegisterCode('I', 'Z'); //'IZ'
+    case X86_REG_ES:
+        return MakeRegisterCode('e', 's'); //'es'
+    case X86_REG_FPSW:
+        return MakeRegisterCode('S', 'W'); //'SW'
+    case X86_REG_FS:
+        return MakeRegisterCode('f', 's'); //'fs'
+    case X86_REG_GS:
+        return MakeRegisterCode('g', 's'); //'gs'
 #ifdef _WIN64
     case X86_REG_RAX:
-        return 'R' << 16 | 'A' << 8 | 'X'; // '\0RAX'
+#endif //_WIN64
+    case X86_REG_EAX:
+    case X86_REG_AX:
+    case X86_REG_AH:
+    case X86_REG_AL:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'A'); //'RA'
+#else //x86
+        return MakeRegisterCode('E', 'A'); //'EA'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RBP:
     case X86_REG_BPL:
-        return 'R' << 16 | 'B' << 8 | 'P'; // '\0RBP'
+#endif //_WIN64
+    case X86_REG_EBP:
+    case X86_REG_BP:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'b'); //'Rb'
+#else //x86
+        return MakeRegisterCode('E', 'b'); //'Eb'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RBX:
-        return 'R' << 16 | 'B' << 8 | 'X'; // '\0RBX'
+#endif //_WIN64
+    case X86_REG_EBX:
+    case X86_REG_BX:
+    case X86_REG_BH:
+    case X86_REG_BL:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'B'); //'RB'
+#else //x86
+        return MakeRegisterCode('E', 'B'); //'EB'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RCX:
-        return 'R' << 16 | 'C' << 8 | 'X'; // '\0RCX'
+#endif //_WIN64
+    case X86_REG_ECX:
+    case X86_REG_CX:
+    case X86_REG_CH:
+    case X86_REG_CL:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'C'); //'RC'
+#else //x86
+        return MakeRegisterCode('E', 'C'); //'EC'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RDI:
     case X86_REG_DIL:
-        return 'R' << 16 | 'D' << 8 | 'I'; // '\0RDI'
+#endif //_WIN64
+    case X86_REG_EDI:
+    case X86_REG_DI:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'd'); //'Rd'
+#else //x86
+        return MakeRegisterCode('E', 'd'); //'Ed'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RDX:
-        return 'R' << 16 | 'D' << 8 | 'X'; // '\0RDX'
-    case X86_REG_RIP:
-        return 'R' << 16 | 'I' << 8 | 'P'; // '\0RIP'
-    case X86_REG_RIZ:
-        return 'R' << 16 | 'I' << 8 | 'Z'; // '\0RIZ'
+#endif //_WIN64
+    case X86_REG_EDX:
+    case X86_REG_DX:
+    case X86_REG_DH:
+    case X86_REG_DL:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'D'); //'RD'
+#else //x86
+        return MakeRegisterCode('E', 'D'); //'ED'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RSI:
     case X86_REG_SIL:
-        return 'R' << 16 | 'S' << 8 | 'I'; // '\0RSI'
+#endif //_WIN64
+    case X86_REG_ESI:
+    case X86_REG_SI:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 'S'); //'RS'
+#else //x86
+        return MakeRegisterCode('E', 'S'); //'ES'
+#endif //_WIN64
+#ifdef _WIN64
     case X86_REG_RSP:
     case X86_REG_SPL:
-        return 'R' << 16 | 'S' << 8 | 'P'; // '\0RSP'
+#endif //_WIN64
+    case X86_REG_ESP:
+    case X86_REG_SP:
+#ifdef _WIN64
+        return MakeRegisterCode('R', 's'); //'Rs'
+#else //x86
+        return MakeRegisterCode('E', 's'); //'Es'
+#endif //_WIN64
+    case X86_REG_SS:
+        return MakeRegisterCode('s', 's'); //'ss'
+    //case X86_REG_CR0:
+    //    return MakeRegisterCode('C', 0); //'C 0'
+    //case X86_REG_CR1:
+    //    return MakeRegisterCode('C', 1); //'C 1'
+    //case X86_REG_CR2:
+    //    return MakeRegisterCode('C', 2); //'C 2'
+    //case X86_REG_CR3:
+    //    return MakeRegisterCode('C', 3); //'C 3'
+    //case X86_REG_CR4:
+    //    return MakeRegisterCode('C', 4); //'C 4'
+    //case X86_REG_CR5:
+    //    return MakeRegisterCode('C', 5); //'C 5'
+    //case X86_REG_CR6:
+    //    return MakeRegisterCode('C', 6); //'C 6'
+    //case X86_REG_CR7:
+    //    return MakeRegisterCode('C', 7); //'C 7'
+    //case X86_REG_CR8:
+    //    return MakeRegisterCode('C', 8); //'C 8'
+    //case X86_REG_CR9:
+    //    return MakeRegisterCode('C', 9); //'C 9'
+    //case X86_REG_CR10:
+    //    return MakeRegisterCode('C', 10); //'C 10'
+    //case X86_REG_CR11:
+    //    return MakeRegisterCode('C', 11); //'C 11'
+    //case X86_REG_CR12:
+    //    return MakeRegisterCode('C', 12); //'C 12'
+    //case X86_REG_CR13:
+    //    return MakeRegisterCode('C', 13); //'C 13'
+    //case X86_REG_CR14:
+    //    return MakeRegisterCode('C', 14); //'C 14'
+    //case X86_REG_CR15:
+    //    return MakeRegisterCode('C', 15); //'C 15'
+    //case X86_REG_DR0:
+    //    return MakeRegisterCode('D', 0); //'D 0'
+    //case X86_REG_DR1:
+    //    return MakeRegisterCode('D', 1); //'D 1'
+    //case X86_REG_DR2:
+    //    return MakeRegisterCode('D', 2); //'D 2'
+    //case X86_REG_DR3:
+    //    return MakeRegisterCode('D', 3); //'D 3'
+    //case X86_REG_DR4:
+    //    return MakeRegisterCode('D', 4); //'D 4'
+    //case X86_REG_DR5:
+    //    return MakeRegisterCode('D', 5); //'D 5'
+    //case X86_REG_DR6:
+    //    return MakeRegisterCode('D', 6); //'D 6'
+    //case X86_REG_DR7:
+    //    return MakeRegisterCode('D', 7); //'D 7'
+    //case X86_REG_DR8:
+    //    return MakeRegisterCode('D', 8); //'D 8'
+    //case X86_REG_DR9:
+    //    return MakeRegisterCode('D', 9); //'D 9'
+    //case X86_REG_DR10:
+    //    return MakeRegisterCode('D', 10); //'D 10'
+    //case X86_REG_DR11:
+    //    return MakeRegisterCode('D', 11); //'D 11'
+    //case X86_REG_DR12:
+    //    return MakeRegisterCode('D', 12); //'D 12'
+    //case X86_REG_DR13:
+    //    return MakeRegisterCode('D', 13); //'D 13'
+    //case X86_REG_DR14:
+    //    return MakeRegisterCode('D', 14); //'D 14'
+    //case X86_REG_DR15:
+    //    return MakeRegisterCode('D', 15); //'D 15'
+    case X86_REG_FP0:
+        return MakeRegisterCode('f', 0); //'f 0'
+    case X86_REG_FP1:
+        return MakeRegisterCode('f', 1); //'f 1'
+    case X86_REG_FP2:
+        return MakeRegisterCode('f', 2); //'f 2'
+    case X86_REG_FP3:
+        return MakeRegisterCode('f', 3); //'f 3'
+    case X86_REG_FP4:
+        return MakeRegisterCode('f', 4); //'f 4'
+    case X86_REG_FP5:
+        return MakeRegisterCode('f', 5); //'f 5'
+    case X86_REG_FP6:
+        return MakeRegisterCode('f', 6); //'f 6'
+    case X86_REG_FP7:
+        return MakeRegisterCode('f', 7); //'f 7'
+    case X86_REG_K0:
+        return MakeRegisterCode('K', 0); //'K 0'
+    case X86_REG_K1:
+        return MakeRegisterCode('K', 1); //'K 1'
+    case X86_REG_K2:
+        return MakeRegisterCode('K', 2); //'K 2'
+    case X86_REG_K3:
+        return MakeRegisterCode('K', 3); //'K 3'
+    case X86_REG_K4:
+        return MakeRegisterCode('K', 4); //'K 4'
+    case X86_REG_K5:
+        return MakeRegisterCode('K', 5); //'K 5'
+    case X86_REG_K6:
+        return MakeRegisterCode('K', 6); //'K 6'
+    case X86_REG_K7:
+        return MakeRegisterCode('K', 7); //'K 7'
+    case X86_REG_MM0:
+        return MakeRegisterCode('M', 0); //'M 0'
+    case X86_REG_MM1:
+        return MakeRegisterCode('M', 1); //'M 1'
+    case X86_REG_MM2:
+        return MakeRegisterCode('M', 2); //'M 2'
+    case X86_REG_MM3:
+        return MakeRegisterCode('M', 3); //'M 3'
+    case X86_REG_MM4:
+        return MakeRegisterCode('M', 4); //'M 4'
+    case X86_REG_MM5:
+        return MakeRegisterCode('M', 5); //'M 5'
+    case X86_REG_MM6:
+        return MakeRegisterCode('M', 6); //'M 6'
+    case X86_REG_MM7:
+        return MakeRegisterCode('M', 7); //'M 7'
     case X86_REG_R8:
     case X86_REG_R8B:
     case X86_REG_R8W:
     case X86_REG_R8D:
-        return 'R' << 8 | '8'; // '\0\0R8'
+        return MakeRegisterCode('R', 8); //'R 8'
     case X86_REG_R9:
     case X86_REG_R9B:
     case X86_REG_R9W:
     case X86_REG_R9D:
-        return 'R' << 8 | '9'; // '\0\0R9'
+        return MakeRegisterCode('R', 9); //'R 9'
     case X86_REG_R10:
     case X86_REG_R10B:
     case X86_REG_R10W:
     case X86_REG_R10D:
-        return 'R' << 16 | '1' << 8 | '0'; // '\0R10'
+        return MakeRegisterCode('R', 10); //'R 10'
     case X86_REG_R11:
     case X86_REG_R11B:
     case X86_REG_R11W:
     case X86_REG_R11D:
-        return 'R' << 16 | '1' << 8 | '1'; // '\0R11'
+        return MakeRegisterCode('R', 11); //'R 11'
     case X86_REG_R12:
     case X86_REG_R12B:
     case X86_REG_R12W:
     case X86_REG_R12D:
-        return 'R' << 16 | '1' << 8 | '2'; // '\0R12'
+        return MakeRegisterCode('R', 12); //'R 12'
     case X86_REG_R13:
     case X86_REG_R13B:
     case X86_REG_R13W:
     case X86_REG_R13D:
-        return 'R' << 16 | '1' << 8 | '3'; // '\0R13'
+        return MakeRegisterCode('R', 13); //'R 13'
     case X86_REG_R14:
     case X86_REG_R14B:
     case X86_REG_R14W:
     case X86_REG_R14D:
-        return 'R' << 16 | '1' << 8 | '4'; // '\0R14'
+        return MakeRegisterCode('R', 14); //'R 14'
     case X86_REG_R15:
     case X86_REG_R15B:
     case X86_REG_R15W:
     case X86_REG_R15D:
-        return 'R' << 16 | '1' << 8 | '5'; // '\0R15'
-#else
-    case X86_REG_EAX:
-        return 'E' << 16 | 'A' << 8 | 'X'; // '\0EAX'
-    case X86_REG_EBP:
-        return 'E' << 16 | 'B' << 8 | 'P'; // '\0EBP'
-    case X86_REG_EBX:
-        return 'E' << 16 | 'B' << 8 | 'X'; // '\0EBX'
-    case X86_REG_ECX:
-        return 'E' << 16 | 'C' << 8 | 'X'; // '\0ECX'
-    case X86_REG_EDI:
-        return 'E' << 16 | 'D' << 8 | 'I'; // '\0EDI'
-    case X86_REG_EDX:
-        return 'E' << 16 | 'D' << 8 | 'X'; // '\0EDX'
-    case X86_REG_EIP:
-        return 'E' << 16 | 'I' << 8 | 'P'; // '\0EIP'
-    case X86_REG_ESI:
-        return 'E' << 16 | 'S' << 8 | 'I'; // '\0ESI'
-    case X86_REG_ESP:
-        return 'E' << 16 | 'S' << 8 | 'P'; // '\0ESP'
-#endif
-    case X86_REG_AH:
-    case X86_REG_AL:
-    case X86_REG_AX:
-#ifdef _WIN64
-        return 'R' << 24 | 'A' << 16 | 'X'; // '\0RAX';
-#else //x86
-        return 'E' << 24 | 'A' << 16 | 'X'; // '\0EAX';
-#endif //_WIN64
-    case X86_REG_BH:
-    case X86_REG_BL:
-    case X86_REG_BX:
-#ifdef _WIN64
-        return 'R' << 24 | 'B' << 16 | 'X'; // '\0RBX';
-#else //x86
-        return 'E' << 24 | 'B' << 16 | 'X'; // '\0EBX';
-#endif //_WIN64
-    case X86_REG_CH:
-    case X86_REG_CL:
-    case X86_REG_CX:
-#ifdef _WIN64
-        return 'R' << 24 | 'C' << 16 | 'X'; // '\0RCX';
-#else //x86
-        return 'E' << 24 | 'C' << 16 | 'X'; // '\0ECX';
-#endif //_WIN64
-    case X86_REG_DH:
-    case X86_REG_DL:
-    case X86_REG_DX:
-#ifdef _WIN64
-        return 'R' << 24 | 'D' << 16 | 'X'; // '\0RDX';
-#else //x86
-        return 'E' << 24 | 'D' << 16 | 'X'; // '\0EDX';
-#endif //_WIN64
-    case X86_REG_DI:
-#ifdef _WIN64
-        return 'R' << 24 | 'D' << 16 | 'I'; // '\0RDI';
-#else //x86
-        return 'E' << 24 | 'D' << 16 | 'I'; // '\0EDI';
-#endif //_WIN64
-    case X86_REG_SI:
-#ifdef _WIN64
-        return 'R' << 24 | 'S' << 16 | 'I'; // '\0RSI';
-#else //x86
-        return 'E' << 24 | 'S' << 16 | 'I'; // '\0ESI';
-#endif //_WIN64
-    case X86_REG_BP:
-#ifdef _WIN64
-        return 'R' << 24 | 'B' << 16 | 'P'; // '\0RBP';
-#else //x86
-        return 'E' << 24 | 'B' << 16 | 'P'; // '\0EBP';
-#endif //_WIN64
-    case X86_REG_SP:
-#ifdef _WIN64
-        return 'R' << 24 | 'S' << 16 | 'P'; // '\0RSP';
-#else //x86
-        return 'E' << 24 | 'S' << 16 | 'P'; // '\0ESP';
-#endif //_WIN64
-    case X86_REG_IP:
-#ifdef _WIN64
-        return 'R' << 24 | 'I' << 16 | 'P'; // '\0RIP';
-#else //x86
-        return 'E' << 24 | 'I' << 16 | 'P'; // '\0EIP';
-#endif //_WIN64
-    case X86_REG_EIZ:
-        return 'E' << 16 | 'I' << 8 | 'Z'; // '\0EIZ'
-    case X86_REG_ES:
-        return 'E' << 8 | 'S'; // '\0\0ES'
-    case X86_REG_CS:
-        return 'C' << 8 | 'S'; // '\0\0CS'
-    case X86_REG_DS:
-        return 'D' << 8 | 'S'; // '\0\0DS'
-    case X86_REG_FPSW:
-        return 'F' << 24 | 'P' << 16 | 'S' << 8 | 'W'; // 'FPSW'
-    case X86_REG_FS:
-        return 'F' << 8 | 'S'; // '\0\0FS'
-    case X86_REG_GS:
-        return 'G' << 8 | 'S'; // '\0\0GS'
-    case X86_REG_SS:
-        return 'S' << 8 | 'S'; // '\0\0SS'
-    case X86_REG_CR0:
-        return 'C' << 16 | 'R' << 8 | '0'; // '\0CR0'
-    case X86_REG_CR1:
-        return 'C' << 16 | 'R' << 8 | '1'; // '\0CR1'
-    case X86_REG_CR2:
-        return 'C' << 16 | 'R' << 8 | '2'; // '\0CR2'
-    case X86_REG_CR3:
-        return 'C' << 16 | 'R' << 8 | '3'; // '\0CR3'
-    case X86_REG_CR4:
-        return 'C' << 16 | 'R' << 8 | '4'; // '\0CR4'
-    case X86_REG_CR5:
-        return 'C' << 16 | 'R' << 8 | '5'; // '\0CR5'
-    case X86_REG_CR6:
-        return 'C' << 16 | 'R' << 8 | '6'; // '\0CR6'
-    case X86_REG_CR7:
-        return 'C' << 16 | 'R' << 8 | '7'; // '\0CR7'
-    case X86_REG_DR0:
-        return 'D' << 16 | 'R' << 8 | '0'; // '\0DR0'
-    case X86_REG_DR1:
-        return 'D' << 16 | 'R' << 8 | '1'; // '\0DR1'
-    case X86_REG_DR2:
-        return 'D' << 16 | 'R' << 8 | '2'; // '\0DR2'
-    case X86_REG_DR3:
-        return 'D' << 16 | 'R' << 8 | '3'; // '\0DR3'
-    case X86_REG_DR4:
-        return 'D' << 16 | 'R' << 8 | '4'; // '\0DR4'
-    case X86_REG_DR5:
-        return 'D' << 16 | 'R' << 8 | '5'; // '\0DR5'
-    case X86_REG_DR6:
-        return 'D' << 16 | 'R' << 8 | '6'; // '\0DR6'
-    case X86_REG_DR7:
-        return 'D' << 16 | 'R' << 8 | '7'; // '\0DR7'
-#ifdef _WIN64
-    case X86_REG_CR8:
-        return 'C' << 16 | 'R' << 8 | '8'; // '\0CR8'
-    case X86_REG_CR9:
-        return 'C' << 16 | 'R' << 8 | '9'; // '\0CR9'
-    case X86_REG_CR10:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '0'; // 'CR10'
-    case X86_REG_CR11:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '1'; // 'CR11'
-    case X86_REG_CR12:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '2'; // 'CR12'
-    case X86_REG_CR13:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '3'; // 'CR13'
-    case X86_REG_CR14:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '4'; // 'CR14'
-    case X86_REG_CR15:
-        return 'C' << 24 | 'R' << 16 | '1' << 8 | '5'; // 'CR15'
-    case X86_REG_DR8:
-        return 'D' << 16 | 'R' << 8 | '8'; // '\0DR8'
-    case X86_REG_DR9:
-        return 'D' << 16 | 'R' << 8 | '9'; // '\0DR9'
-    case X86_REG_DR10:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '0'; // 'DR10'
-    case X86_REG_DR11:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '1'; // 'DR11'
-    case X86_REG_DR12:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '2'; // 'DR12'
-    case X86_REG_DR13:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '3'; // 'DR13'
-    case X86_REG_DR14:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '4'; // 'DR14'
-    case X86_REG_DR15:
-        return 'D' << 24 | 'R' << 16 | '1' << 8 | '5'; // 'DR15'
-#endif //_WIN64
-    case X86_REG_FP0:
-        return 'F' << 16 | 'P' << 8 | '0'; // '\0FP0'
-    case X86_REG_FP1:
-        return 'F' << 16 | 'P' << 8 | '1'; // '\0FP1'
-    case X86_REG_FP2:
-        return 'F' << 16 | 'P' << 8 | '2'; // '\0FP2'
-    case X86_REG_FP3:
-        return 'F' << 16 | 'P' << 8 | '3'; // '\0FP3'
-    case X86_REG_FP4:
-        return 'F' << 16 | 'P' << 8 | '4'; // '\0FP4'
-    case X86_REG_FP5:
-        return 'F' << 16 | 'P' << 8 | '5'; // '\0FP5'
-    case X86_REG_FP6:
-        return 'F' << 16 | 'P' << 8 | '6'; // '\0FP6'
-    case X86_REG_FP7:
-        return 'F' << 16 | 'P' << 8 | '7'; // '\0FP7'
-    case X86_REG_K0:
-        return 'K' << 8 | '0'; // '\0\0K0'
-    case X86_REG_K1:
-        return 'K' << 8 | '1'; // '\0\0K1'
-    case X86_REG_K2:
-        return 'K' << 8 | '2'; // '\0\0K2'
-    case X86_REG_K3:
-        return 'K' << 8 | '3'; // '\0\0K3'
-    case X86_REG_K4:
-        return 'K' << 8 | '4'; // '\0\0K4'
-    case X86_REG_K5:
-        return 'K' << 8 | '5'; // '\0\0K5'
-    case X86_REG_K6:
-        return 'K' << 8 | '6'; // '\0\0K6'
-    case X86_REG_K7:
-        return 'K' << 8 | '7'; // '\0\0K7'
-    case X86_REG_MM0:
-        return 'M' << 16 | 'M' << 8 | '0'; // '\0MM0'
-    case X86_REG_MM1:
-        return 'M' << 16 | 'M' << 8 | '1'; // '\0MM1'
-    case X86_REG_MM2:
-        return 'M' << 16 | 'M' << 8 | '2'; // '\0MM2'
-    case X86_REG_MM3:
-        return 'M' << 16 | 'M' << 8 | '3'; // '\0MM3'
-    case X86_REG_MM4:
-        return 'M' << 16 | 'M' << 8 | '4'; // '\0MM4'
-    case X86_REG_MM5:
-        return 'M' << 16 | 'M' << 8 | '5'; // '\0MM5'
-    case X86_REG_MM6:
-        return 'M' << 16 | 'M' << 8 | '6'; // '\0MM6'
-    case X86_REG_MM7:
-        return 'M' << 16 | 'M' << 8 | '7'; // '\0MM7'
+        return MakeRegisterCode('R', 15); //'R 15'
     case X86_REG_ST0:
-        return 'S' << 16 | 'T' << 8 | '0'; // '\0ST0'
+        return MakeRegisterCode('S', 0); //'S 0'
     case X86_REG_ST1:
-        return 'S' << 16 | 'T' << 8 | '1'; // '\0ST1'
+        return MakeRegisterCode('S', 1); //'S 1'
     case X86_REG_ST2:
-        return 'S' << 16 | 'T' << 8 | '2'; // '\0ST2'
+        return MakeRegisterCode('S', 2); //'S 2'
     case X86_REG_ST3:
-        return 'S' << 16 | 'T' << 8 | '3'; // '\0ST3'
+        return MakeRegisterCode('S', 3); //'S 3'
     case X86_REG_ST4:
-        return 'S' << 16 | 'T' << 8 | '4'; // '\0ST4'
+        return MakeRegisterCode('S', 4); //'S 4'
     case X86_REG_ST5:
-        return 'S' << 16 | 'T' << 8 | '5'; // '\0ST5'
+        return MakeRegisterCode('S', 5); //'S 5'
     case X86_REG_ST6:
-        return 'S' << 16 | 'T' << 8 | '6'; // '\0ST6'
+        return MakeRegisterCode('S', 6); //'S 6'
     case X86_REG_ST7:
-        return 'S' << 16 | 'T' << 8 | '7'; // '\0ST7'
+        return MakeRegisterCode('S', 7); //'S 7'
     case X86_REG_XMM0:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '0'; // 'XMM0'
+        return MakeRegisterCode('X', 0); //'X 0'
     case X86_REG_XMM1:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '1'; // 'XMM1'
+        return MakeRegisterCode('X', 1); //'X 1'
     case X86_REG_XMM2:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '2'; // 'XMM2'
+        return MakeRegisterCode('X', 2); //'X 2'
     case X86_REG_XMM3:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '3'; // 'XMM3'
+        return MakeRegisterCode('X', 3); //'X 3'
     case X86_REG_XMM4:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '4'; // 'XMM4'
+        return MakeRegisterCode('X', 4); //'X 4'
     case X86_REG_XMM5:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '5'; // 'XMM5'
+        return MakeRegisterCode('X', 5); //'X 5'
     case X86_REG_XMM6:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '6'; // 'XMM6'
+        return MakeRegisterCode('X', 6); //'X 6'
     case X86_REG_XMM7:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '7'; // 'XMM7'
+        return MakeRegisterCode('X', 7); //'X 7'
     case X86_REG_XMM8:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '8'; // 'XMM8'
+        return MakeRegisterCode('X', 8); //'X 8'
     case X86_REG_XMM9:
-        return 'X' << 24 | 'M' << 16 | 'M' << 8 | '9'; // 'XMM9'
+        return MakeRegisterCode('X', 9); //'X 9'
     case X86_REG_XMM10:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '0'; // 'XM10'
+        return MakeRegisterCode('X', 10); //'X 10'
     case X86_REG_XMM11:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '1'; // 'XM11'
+        return MakeRegisterCode('X', 11); //'X 11'
     case X86_REG_XMM12:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '2'; // 'XM12'
+        return MakeRegisterCode('X', 12); //'X 12'
     case X86_REG_XMM13:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '3'; // 'XM13'
+        return MakeRegisterCode('X', 13); //'X 13'
     case X86_REG_XMM14:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '4'; // 'XM14'
+        return MakeRegisterCode('X', 14); //'X 14'
     case X86_REG_XMM15:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '5'; // 'XM15'
+        return MakeRegisterCode('X', 15); //'X 15'
     case X86_REG_XMM16:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '6'; // 'XM16'
+        return MakeRegisterCode('X', 16); //'X 16'
     case X86_REG_XMM17:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '7'; // 'XM17'
+        return MakeRegisterCode('X', 17); //'X 17'
     case X86_REG_XMM18:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '8'; // 'XM18'
+        return MakeRegisterCode('X', 18); //'X 18'
     case X86_REG_XMM19:
-        return 'X' << 24 | 'M' << 16 | '1' << 8 | '9'; // 'XM19'
+        return MakeRegisterCode('X', 19); //'X 19'
     case X86_REG_XMM20:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '0'; // 'XM20'
+        return MakeRegisterCode('X', 20); //'X 20'
     case X86_REG_XMM21:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '1'; // 'XM21'
+        return MakeRegisterCode('X', 21); //'X 21'
     case X86_REG_XMM22:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '2'; // 'XM22'
+        return MakeRegisterCode('X', 22); //'X 22'
     case X86_REG_XMM23:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '3'; // 'XM23'
+        return MakeRegisterCode('X', 23); //'X 23'
     case X86_REG_XMM24:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '4'; // 'XM24'
+        return MakeRegisterCode('X', 24); //'X 24'
     case X86_REG_XMM25:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '5'; // 'XM25'
+        return MakeRegisterCode('X', 25); //'X 25'
     case X86_REG_XMM26:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '6'; // 'XM26'
+        return MakeRegisterCode('X', 26); //'X 26'
     case X86_REG_XMM27:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '7'; // 'XM27'
+        return MakeRegisterCode('X', 27); //'X 27'
     case X86_REG_XMM28:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '8'; // 'XM28'
+        return MakeRegisterCode('X', 28); //'X 28'
     case X86_REG_XMM29:
-        return 'X' << 24 | 'M' << 16 | '2' << 8 | '9'; // 'XM29'
+        return MakeRegisterCode('X', 29); //'X 29'
     case X86_REG_XMM30:
-        return 'X' << 24 | 'M' << 16 | '3' << 8 | '0'; // 'XM30'
+        return MakeRegisterCode('X', 30); //'X 30'
     case X86_REG_XMM31:
-        return 'X' << 24 | 'M' << 16 | '3' << 8 | '1'; // 'XM31'
+        return MakeRegisterCode('X', 31); //'X 31'
     case X86_REG_YMM0:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '0'; // 'YMM0'
+        return MakeRegisterCode('Y', 0); //'Y 0'
     case X86_REG_YMM1:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '1'; // 'YMM1'
+        return MakeRegisterCode('Y', 1); //'Y 1'
     case X86_REG_YMM2:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '2'; // 'YMM2'
+        return MakeRegisterCode('Y', 2); //'Y 2'
     case X86_REG_YMM3:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '3'; // 'YMM3'
+        return MakeRegisterCode('Y', 3); //'Y 3'
     case X86_REG_YMM4:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '4'; // 'YMM4'
+        return MakeRegisterCode('Y', 4); //'Y 4'
     case X86_REG_YMM5:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '5'; // 'YMM5'
+        return MakeRegisterCode('Y', 5); //'Y 5'
     case X86_REG_YMM6:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '6'; // 'YMM6'
+        return MakeRegisterCode('Y', 6); //'Y 6'
     case X86_REG_YMM7:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '7'; // 'YMM7'
+        return MakeRegisterCode('Y', 7); //'Y 7'
     case X86_REG_YMM8:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '8'; // 'YMM8'
+        return MakeRegisterCode('Y', 8); //'Y 8'
     case X86_REG_YMM9:
-        return 'Y' << 24 | 'M' << 16 | 'M' << 8 | '9'; // 'YMM9'
+        return MakeRegisterCode('Y', 9); //'Y 9'
     case X86_REG_YMM10:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '0'; // 'YM10'
+        return MakeRegisterCode('Y', 10); //'Y 10'
     case X86_REG_YMM11:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '1'; // 'YM11'
+        return MakeRegisterCode('Y', 11); //'Y 11'
     case X86_REG_YMM12:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '2'; // 'YM12'
+        return MakeRegisterCode('Y', 12); //'Y 12'
     case X86_REG_YMM13:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '3'; // 'YM13'
+        return MakeRegisterCode('Y', 13); //'Y 13'
     case X86_REG_YMM14:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '4'; // 'YM14'
+        return MakeRegisterCode('Y', 14); //'Y 14'
     case X86_REG_YMM15:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '5'; // 'YM15'
+        return MakeRegisterCode('Y', 15); //'Y 15'
     case X86_REG_YMM16:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '6'; // 'YM16'
+        return MakeRegisterCode('Y', 16); //'Y 16'
     case X86_REG_YMM17:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '7'; // 'YM17'
+        return MakeRegisterCode('Y', 17); //'Y 17'
     case X86_REG_YMM18:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '8'; // 'YM18'
+        return MakeRegisterCode('Y', 18); //'Y 18'
     case X86_REG_YMM19:
-        return 'Y' << 24 | 'M' << 16 | '1' << 8 | '9'; // 'YM19'
+        return MakeRegisterCode('Y', 19); //'Y 19'
     case X86_REG_YMM20:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '0'; // 'YM20'
+        return MakeRegisterCode('Y', 20); //'Y 20'
     case X86_REG_YMM21:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '1'; // 'YM21'
+        return MakeRegisterCode('Y', 21); //'Y 21'
     case X86_REG_YMM22:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '2'; // 'YM22'
+        return MakeRegisterCode('Y', 22); //'Y 22'
     case X86_REG_YMM23:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '3'; // 'YM23'
+        return MakeRegisterCode('Y', 23); //'Y 23'
     case X86_REG_YMM24:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '4'; // 'YM24'
+        return MakeRegisterCode('Y', 24); //'Y 24'
     case X86_REG_YMM25:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '5'; // 'YM25'
+        return MakeRegisterCode('Y', 25); //'Y 25'
     case X86_REG_YMM26:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '6'; // 'YM26'
+        return MakeRegisterCode('Y', 26); //'Y 26'
     case X86_REG_YMM27:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '7'; // 'YM27'
+        return MakeRegisterCode('Y', 27); //'Y 27'
     case X86_REG_YMM28:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '8'; // 'YM28'
+        return MakeRegisterCode('Y', 28); //'Y 28'
     case X86_REG_YMM29:
-        return 'Y' << 24 | 'M' << 16 | '2' << 8 | '9'; // 'YM29'
+        return MakeRegisterCode('Y', 29); //'Y 29'
     case X86_REG_YMM30:
-        return 'Y' << 24 | 'M' << 16 | '3' << 8 | '0'; // 'YM30'
+        return MakeRegisterCode('Y', 30); //'Y 30'
     case X86_REG_YMM31:
-        return 'Y' << 24 | 'M' << 16 | '3' << 8 | '1'; // 'YM31'
+        return MakeRegisterCode('Y', 31); //'Y 31'
     case X86_REG_ZMM0:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '0'; // 'ZMM0'
+        return MakeRegisterCode('Z', 0); //'Z 0'
     case X86_REG_ZMM1:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '1'; // 'ZMM1'
+        return MakeRegisterCode('Z', 1); //'Z 1'
     case X86_REG_ZMM2:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '2'; // 'ZMM2'
+        return MakeRegisterCode('Z', 2); //'Z 2'
     case X86_REG_ZMM3:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '3'; // 'ZMM3'
+        return MakeRegisterCode('Z', 3); //'Z 3'
     case X86_REG_ZMM4:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '4'; // 'ZMM4'
+        return MakeRegisterCode('Z', 4); //'Z 4'
     case X86_REG_ZMM5:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '5'; // 'ZMM5'
+        return MakeRegisterCode('Z', 5); //'Z 5'
     case X86_REG_ZMM6:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '6'; // 'ZMM6'
+        return MakeRegisterCode('Z', 6); //'Z 6'
     case X86_REG_ZMM7:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '7'; // 'ZMM7'
+        return MakeRegisterCode('Z', 7); //'Z 7'
     case X86_REG_ZMM8:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '8'; // 'ZMM8'
+        return MakeRegisterCode('Z', 8); //'Z 8'
     case X86_REG_ZMM9:
-        return 'Z' << 24 | 'M' << 16 | 'M' << 8 | '9'; // 'ZMM9'
+        return MakeRegisterCode('Z', 9); //'Z 9'
     case X86_REG_ZMM10:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '0'; // 'ZM10'
+        return MakeRegisterCode('Z', 10); //'Z 10'
     case X86_REG_ZMM11:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '1'; // 'ZM11'
+        return MakeRegisterCode('Z', 11); //'Z 11'
     case X86_REG_ZMM12:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '2'; // 'ZM12'
+        return MakeRegisterCode('Z', 12); //'Z 12'
     case X86_REG_ZMM13:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '3'; // 'ZM13'
+        return MakeRegisterCode('Z', 13); //'Z 13'
     case X86_REG_ZMM14:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '4'; // 'ZM14'
+        return MakeRegisterCode('Z', 14); //'Z 14'
     case X86_REG_ZMM15:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '5'; // 'ZM15'
+        return MakeRegisterCode('Z', 15); //'Z 15'
     case X86_REG_ZMM16:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '6'; // 'ZM16'
+        return MakeRegisterCode('Z', 16); //'Z 16'
     case X86_REG_ZMM17:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '7'; // 'ZM17'
+        return MakeRegisterCode('Z', 17); //'Z 17'
     case X86_REG_ZMM18:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '8'; // 'ZM18'
+        return MakeRegisterCode('Z', 18); //'Z 18'
     case X86_REG_ZMM19:
-        return 'Z' << 24 | 'M' << 16 | '1' << 8 | '9'; // 'ZM19'
+        return MakeRegisterCode('Z', 19); //'Z 19'
     case X86_REG_ZMM20:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '0'; // 'ZM20'
+        return MakeRegisterCode('Z', 20); //'Z 20'
     case X86_REG_ZMM21:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '1'; // 'ZM21'
+        return MakeRegisterCode('Z', 21); //'Z 21'
     case X86_REG_ZMM22:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '2'; // 'ZM22'
+        return MakeRegisterCode('Z', 22); //'Z 22'
     case X86_REG_ZMM23:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '3'; // 'ZM23'
+        return MakeRegisterCode('Z', 23); //'Z 23'
     case X86_REG_ZMM24:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '4'; // 'ZM24'
+        return MakeRegisterCode('Z', 24); //'Z 24'
     case X86_REG_ZMM25:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '5'; // 'ZM25'
+        return MakeRegisterCode('Z', 25); //'Z 25'
     case X86_REG_ZMM26:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '6'; // 'ZM26'
+        return MakeRegisterCode('Z', 26); //'Z 26'
     case X86_REG_ZMM27:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '7'; // 'ZM27'
+        return MakeRegisterCode('Z', 27); //'Z 27'
     case X86_REG_ZMM28:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '8'; // 'ZM28'
+        return MakeRegisterCode('Z', 28); //'Z 28'
     case X86_REG_ZMM29:
-        return 'Z' << 24 | 'M' << 16 | '2' << 8 | '9'; // 'ZM29'
+        return MakeRegisterCode('Z', 29); //'Z 29'
     case X86_REG_ZMM30:
-        return 'Z' << 24 | 'M' << 16 | '3' << 8 | '0'; // 'ZM30'
+        return MakeRegisterCode('Z', 30); //'Z 30'
     case X86_REG_ZMM31:
-        return 'Z' << 24 | 'M' << 16 | '3' << 8 | '1'; // 'ZM31'
+        return MakeRegisterCode('Z', 31); //'Z 31'
     default:
-        return 0; // '\0\0\0\0'
+        return 0; // '\0\0'
+    }
+}
+
+void TraceRecordManager::CapstoneReadReg(TITAN_ENGINE_CONTEXT_t* context, unsigned short reg, unsigned char* buffer, unsigned int* size)
+{
+    switch(reg)
+    {
+#ifdef _WIN64
+    case MakeRegisterCode('R', 'a'):
+#else //x86
+    case MakeRegisterCode('E', 'a'):
+#endif //_WIN64
+        memcpy(buffer, &context->cax, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+#ifdef _WIN64
+    case MakeRegisterCode('R', 'b'):
+#else //x86
+    case MakeRegisterCode('E', 'b'):
+#endif //_WIN64
+        memcpy(buffer, &context->cbx, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+#ifdef _WIN64
+    case MakeRegisterCode('R', 'c'):
+#else //x86
+    case MakeRegisterCode('E', 'c'):
+#endif //_WIN64
+        memcpy(buffer, &context->ccx, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+#ifdef _WIN64
+    case MakeRegisterCode('R', 'd'):
+#else //x86
+    case MakeRegisterCode('E', 'd'):
+#endif //_WIN64
+        memcpy(buffer, &context->cdx, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+#ifdef _WIN64
+    case MakeRegisterCode('R', 8):
+        memcpy(buffer, &context->r8, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 9):
+        memcpy(buffer, &context->r9, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 10):
+        memcpy(buffer, &context->r10, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 11):
+        memcpy(buffer, &context->r11, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 12):
+        memcpy(buffer, &context->r12, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 13):
+        memcpy(buffer, &context->r13, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 14):
+        memcpy(buffer, &context->r14, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+    case MakeRegisterCode('R', 15):
+        memcpy(buffer, &context->r15, sizeof(duint));
+        size[0] = sizeof(duint);
+        return;
+#endif //_WIN64
+    case MakeRegisterCode('X', 0):
+        memcpy(buffer, &context->XmmRegisters[0], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 0):
+        memcpy(buffer, &context->YmmRegisters[0], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 1):
+        memcpy(buffer, &context->XmmRegisters[1], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 1):
+        memcpy(buffer, &context->YmmRegisters[1], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 2):
+        memcpy(buffer, &context->XmmRegisters[2], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 2):
+        memcpy(buffer, &context->YmmRegisters[2], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 3):
+        memcpy(buffer, &context->XmmRegisters[3], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 3):
+        memcpy(buffer, &context->YmmRegisters[3], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 4):
+        memcpy(buffer, &context->XmmRegisters[4], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 4):
+        memcpy(buffer, &context->YmmRegisters[4], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 5):
+        memcpy(buffer, &context->XmmRegisters[5], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 5):
+        memcpy(buffer, &context->YmmRegisters[5], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 6):
+        memcpy(buffer, &context->XmmRegisters[6], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 6):
+        memcpy(buffer, &context->YmmRegisters[6], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 7):
+        memcpy(buffer, &context->XmmRegisters[7], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 7):
+        memcpy(buffer, &context->YmmRegisters[7], 32);
+        size[0] = 32;
+        return;
+#ifdef _WIN64
+    case MakeRegisterCode('X', 8):
+        memcpy(buffer, &context->XmmRegisters[8], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 8):
+        memcpy(buffer, &context->YmmRegisters[8], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 9):
+        memcpy(buffer, &context->XmmRegisters[9], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 9):
+        memcpy(buffer, &context->YmmRegisters[9], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 10):
+        memcpy(buffer, &context->XmmRegisters[10], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 10):
+        memcpy(buffer, &context->YmmRegisters[10], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 11):
+        memcpy(buffer, &context->XmmRegisters[11], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 11):
+        memcpy(buffer, &context->YmmRegisters[11], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 12):
+        memcpy(buffer, &context->XmmRegisters[12], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 12):
+        memcpy(buffer, &context->YmmRegisters[12], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 13):
+        memcpy(buffer, &context->XmmRegisters[13], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 13):
+        memcpy(buffer, &context->YmmRegisters[13], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 14):
+        memcpy(buffer, &context->XmmRegisters[14], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 14):
+        memcpy(buffer, &context->YmmRegisters[14], 32);
+        size[0] = 32;
+        return;
+    case MakeRegisterCode('X', 15):
+        memcpy(buffer, &context->XmmRegisters[15], 16);
+        size[0] = 16;
+        return;
+    case MakeRegisterCode('Y', 15):
+        memcpy(buffer, &context->YmmRegisters[15], 32);
+        size[0] = 32;
+        return;
+#endif //_WIN64
     }
 }
 
@@ -1020,7 +1229,7 @@ void _dbg_dbgtraceexecute(duint CIP)
             TraceRecord.increaseInstructionCounter();
             Capstone instruction;
             instruction.Disassemble(CIP, buffer, MAX_DISASM_BUFFER);
-            TraceRecord.TraceExecute(CIP, instruction.Size(), &instruction);
+            TraceRecord.TraceExecute(CIP, instruction.Size(), &instruction, buffer);
         }
         else
         {

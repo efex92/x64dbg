@@ -2,6 +2,8 @@
 #define TRACERECORD_H
 #include "_global.h"
 #include "_dbgfunctions.h"
+#include "debugger.h"
+#include "capstone_wrapper.h"
 
 class TraceRecordManager
 {
@@ -60,7 +62,7 @@ public:
     TraceRecordType getTraceRecordType(duint pageAddress);
     bool createTraceRecordFile(const char* fileName);
 
-    void TraceExecute(duint address, size_t size, Capstone* instruction);
+    void TraceExecute(duint address, size_t size, Capstone* instruction, unsigned char* instructionDump);
     void TraceAccess(duint address, unsigned char size, TraceRecordByteType accessType);
     void TraceModuleLoad(const char* moduleName, duint base);
     void TraceModuleUnload(const char* moduleName, duint base);
@@ -108,7 +110,8 @@ private:
         char* serialize();
     };
 
-    static DWORD CapstoneRegToTraceRecordName(x86_reg reg);
+    static unsigned short CapstoneRegToTraceRecordName(x86_reg reg);
+    static void CapstoneReadReg(TITAN_ENGINE_CONTEXT_t* context, unsigned short reg, unsigned char* buffer, unsigned int* size);
 
     //Key := page base, value := trace record raw data
     std::unordered_map<duint, TraceRecordPage> TraceRecord;
