@@ -56,10 +56,18 @@ bool TraceRecordManager::setTraceRecordType(duint pageAddress, TraceRecordType t
                 newPage.rawPtr = emalloc(4096 * 2, "TraceRecordManager");
                 memset(newPage.rawPtr, 0, 4096 * 2);
                 break;
+            case TraceRecordDWordWithAccessTypeAndAddr:
+                newPage.rawPtr = emalloc(4096 * 4, "TraceRecordManager");
+                memset(newPage.rawPtr, 0, 4096 * 4);
+                break;
             default:
                 return false;
             }
             newPage.dataType = type;
+            newPage.runTraceInfo.Enabled = false;
+            newPage.runTraceInfo.CodeBytes = false;
+            newPage.runTraceInfo.TID = false;
+            newPage.runTraceInfo.PID = false;
             if(ModNameFromAddr(pageAddress, modName, true))
             {
                 newPage.rva = pageAddress - ModBaseFromAddr(pageAddress);
@@ -240,9 +248,8 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         (IP)(TID)(PID)
         (code bytes)
         (sizeOfOperands sizeOfOperands) //maximum size till here is 42 bytes
-        (2bit operandtype:{00 register 01 memory(32-bit address) 10 memory(64-bit address) 11 reserved)
+        (2bit reserved)(2bit operandtype:{00 register 01 memory(32-bit address) 10 memory(64-bit address) 11 reserved)
         (1bit type:{0 old 1 new})(3bit operandsize:{000 1byte 001 2byte 010 4byte 011 8byte 100 16byte 101 32byte 110 (32-bit size) 111 (64-bit size))
-        (2bit reserved)
         (2byte operand name) or (DWORD/QWORD memory address)
         (optional sizeOfMemoryOperand)
         (n-byte operand value)
@@ -312,7 +319,70 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             buffer[1] |= (regReadCount + regWriteCount) & 0x0F;
             for(i = 0; i < regReadCount; i++)
             {
+                unsigned int registerSize = 0;
+                unsigned short operandName = CapstoneRegToTraceRecordName((x86_reg)regRead[i]);
+                CapstoneReadReg(&context, operandName, buffer + 512, &registerSize);
+                memcpy(&operandsBuffer[operandsSize + 1], &operandName, 2);
+                switch(registerSize)
+                {
+                case 1:
+                    break;
+                case 2:
+                    operandsBuffer[operandsSize] |= 1;
+                    break;
+                case 4:
+                    operandsBuffer[operandsSize] |= 2;
+                    break;
+                case 8:
+                    operandsBuffer[operandsSize] |= 3;
+                    break;
+                case 16:
+                    operandsBuffer[operandsSize] |= 4;
+                    break;
+                case 32:
+                    operandsBuffer[operandsSize] |= 5;
+                    break;
+                default:
+                    //TODO
+                }
+                operandsSize += 3;
+                memcpy(operandsBuffer + operandsSize, buffer + 512, registerSize);
+                operandsSize += registerSize;
             }
+            if(operandsSize == 0)
+            {
+                //nothing to change. every bit is 0
+            }
+            else if(operandsSize <= 0xff)
+            {
+                buffer[0] |= 0x01;
+                *bufferPtr = operandsSize;
+                bufferPtr++;
+            }
+#ifdef _WIN64
+            else if(operandsSize <= 0xffffffff)
+#else //x86
+            else
+#endif //_WIN64
+            {
+                buffer[0] |= 0x02;
+                memcpy(bufferPtr, &operandsSize, 4);
+                bufferPtr += 4;
+            }
+#ifdef _WIN64
+            else
+            {
+                buffer[0] |= 0x03;
+                memcpy(bufferPtr, &operandsSize, 8);
+                bufferPtr += 8;
+            }
+#endif //_WIN64
+            if(operandsSize != 0)
+            {
+                memcpy(bufferPtr, operandsBuffer, operandsSize);
+                bufferPtr += operandsSize;
+            }
+
         }
         mRunTraceLastIP = address + instruction->Size();
         mRunTraceLastTID = TID;
@@ -359,8 +429,8 @@ TraceRecordManager::TraceRecordByteType TraceRecordManager::getByteType(duint ad
         duint offset = address - base;
         switch(pageInfo.dataType)
         {
-        case TraceRecordType::TraceRecordBitExec:
         default:
+        case TraceRecordType::TraceRecordBitExec:
             return TraceRecordByteType::InstructionHeading;
         case TraceRecordType::TraceRecordByteWithExecTypeAndCounter:
             return (TraceRecordByteType)((((char*)pageInfo.rawPtr)[offset] & 0xC0) >> 6);
@@ -406,6 +476,9 @@ void TraceRecordManager::saveToDb(JSON root)
         case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
             size = 4096 * 2;
             break;
+        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+            size = 4096 * 4;
+            break;
         default:
             __debugbreak(); // We have encountered an error condition.
         }
@@ -448,6 +521,9 @@ void TraceRecordManager::loadFromDb(JSON root)
             break;
         case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
             size = 4096 * 2;
+            break;
+        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+            size = 4096 * 4;
             break;
         default:
             size = 0;
@@ -1214,6 +1290,9 @@ void TraceRecordManager::CapstoneReadReg(TITAN_ENGINE_CONTEXT_t* context, unsign
         size[0] = 32;
         return;
 #endif //_WIN64
+    default:
+        size[0] = 0;
+        return;
     }
 }
 
