@@ -71,7 +71,7 @@ public:
 
     unsigned int getHitCount(duint address);
     TraceRecordByteType getByteType(duint address);
-    void increaseInstructionCounter();
+    unsigned int getTraceRecordSize(TraceRecordType byteType);
 
     void saveToDb(JSON root);
     void loadFromDb(JSON root);
@@ -80,6 +80,10 @@ public:
     char mRunTraceFileName[MAX_PATH];
     duint mRunTraceLastTID;
     duint mRunTraceLastIP;
+    cs_regs mRunTraceLastWritten;
+    unsigned char mRunTraceLastWrittenCount;
+    unsigned char mRunTraceLastBuffer[672];
+    int mRunTraceLastBufferSize;
 
 private:
 
@@ -112,12 +116,12 @@ private:
 
     static unsigned short CapstoneRegToTraceRecordName(x86_reg reg);
     static void CapstoneReadReg(TITAN_ENGINE_CONTEXT_t* context, unsigned short reg, unsigned char* buffer, unsigned int* size);
+    void ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, int* bufferSize, const cs_regs* registers, unsigned char registersCount);
 
     //Key := page base, value := trace record raw data
     std::unordered_map<duint, TraceRecordPage> TraceRecord;
     std::vector<std::string> ModuleNames;
     unsigned int getModuleIndex(const String & moduleName);
-    unsigned int instructionCounter;
 };
 
 extern TraceRecordManager TraceRecord;

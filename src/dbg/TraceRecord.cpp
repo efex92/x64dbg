@@ -1,3 +1,8 @@
+/**
+\file TraceRecord.cpp
+\brief Implements the TraceRecordManager class, and manages trace record data.
+*/
+
 #include "TraceRecord.h"
 #include "module.h"
 #include "memory.h"
@@ -7,7 +12,7 @@
 
 TraceRecordManager TraceRecord;
 
-TraceRecordManager::TraceRecordManager() : instructionCounter(0)
+TraceRecordManager::TraceRecordManager()
 {
     ModuleNames.emplace_back("");
     mRunTraceFile = NULL;
@@ -42,27 +47,9 @@ bool TraceRecordManager::setTraceRecordType(duint pageAddress, TraceRecordType t
         {
             TraceRecordPage newPage;
             char modName[MAX_MODULE_SIZE];
-            switch(type)
-            {
-            case TraceRecordBitExec:
-                newPage.rawPtr = emalloc(4096 / 8, "TraceRecordManager");
-                memset(newPage.rawPtr, 0, 4096 / 8);
-                break;
-            case TraceRecordByteWithExecTypeAndCounter:
-                newPage.rawPtr = emalloc(4096, "TraceRecordManager");
-                memset(newPage.rawPtr, 0, 4096);
-                break;
-            case TraceRecordWordWithExecTypeAndCounter:
-                newPage.rawPtr = emalloc(4096 * 2, "TraceRecordManager");
-                memset(newPage.rawPtr, 0, 4096 * 2);
-                break;
-            case TraceRecordDWordWithAccessTypeAndAddr:
-                newPage.rawPtr = emalloc(4096 * 4, "TraceRecordManager");
-                memset(newPage.rawPtr, 0, 4096 * 4);
-                break;
-            default:
-                return false;
-            }
+            //allocate memory for trace record
+            newPage.rawPtr = emalloc(getTraceRecordSize(type), "TraceRecordManager");
+            //emalloc always zero the memory
             newPage.dataType = type;
             newPage.runTraceInfo.Enabled = false;
             newPage.runTraceInfo.CodeBytes = false;
@@ -265,19 +252,72 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         if(GetFullContextDataEx(hActiveThread, &context) && instruction->RegsAccess(regRead, &regReadCount, regWrite, &regWriteCount))
         {
             dsint relativeIP = address - mRunTraceLastIP;
-            unsigned char buffer[672];
             unsigned char operandsBuffer[620];
-            unsigned int operandsSize = 0;
-            unsigned char* bufferPtr = buffer;
+            int operandsSize = 0;
+            unsigned char* bufferPtr = mRunTraceLastBuffer;
             unsigned char i;
-            memset(buffer, 0, sizeof(buffer));
             memset(operandsBuffer, 0, sizeof(operandsBuffer));
+            // Process last instruction
+            // save written registers
+            ComposeRunTraceOperandBuffer(&context, true, mRunTraceLastBuffer + mRunTraceLastBufferSize, &operandsSize, &mRunTraceLastWritten, mRunTraceLastWrittenCount);
+            mRunTraceLastBufferSize += operandsSize;
+            operandsSize = 0;
+            // save buffer of last instruction to file
+            if(operandsSize == 0)
+            {
+                //nothing to change. every bit is 0
+            }
+            else if(operandsSize <= 0xff)
+            {
+                mRunTraceLastBuffer[0] |= 0x01;
+                *bufferPtr = operandsSize;
+                bufferPtr++;
+            }
+#ifdef _WIN64
+            else if(operandsSize <= 0xffffffff)
+#else //x86
+            else
+#endif //_WIN64
+            {
+                mRunTraceLastBuffer[0] |= 0x02;
+                memcpy(bufferPtr, &operandsSize, 4);
+                bufferPtr += 4;
+            }
+#ifdef _WIN64
+            else
+            {
+                mRunTraceLastBuffer[0] |= 0x03;
+                memcpy(bufferPtr, &operandsSize, 8);
+                bufferPtr += 8;
+            }
+#endif //_WIN64
+            if(operandsSize != 0)
+            {
+                memcpy(bufferPtr, mRunTraceLastBuffer, operandsSize);
+                bufferPtr += operandsSize;
+            }
+            DWORD written = 0;
+            if(WriteFile(mRunTraceFile, mRunTraceLastBuffer, bufferPtr - mRunTraceLastBuffer, &written, NULL) == FALSE)
+            {
+#ifdef _WIN64
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to write trace record data to %s (RIP = %p). Run trace will be stopped.\n"), mRunTraceFile, address);
+#else //x86
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to write trace record data to %s (EIP = %p). Run trace will be stopped.\n"), mRunTraceFile, address);
+#endif //_WIN64
+                CloseHandle(mRunTraceFile);
+                mRunTraceFile = NULL;
+                memset(mRunTraceFileName, 0, sizeof(mRunTraceFileName));
+                mRunTraceLastIP = 0;
+                mRunTraceLastTID = 0;
+                return;
+            }
+            // Process current instruction
             // save IP
             if((relativeIP >= -0x80 && relativeIP <= 0x7f) && relativeIP != 0)
             {
-                buffer[0] |= 0x10;
-                buffer[2] = (unsigned char)relativeIP;
-                bufferPtr = buffer + 3;
+                mRunTraceLastBuffer[0] |= 0x10;
+                mRunTraceLastBuffer[2] = (unsigned char)relativeIP;
+                bufferPtr = mRunTraceLastBuffer + 3;
             }
 #ifdef _WIN64 // relative IP can be larger than 32 bits
             else if(relativeIP <= 0x7FFFFFFF && relativeIP >= -0x80000000)
@@ -285,8 +325,8 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             else
 #endif //_WIN64
             {
-                buffer[0] |= 0x20;
-                bufferPtr = buffer + 2;
+                mRunTraceLastBuffer[0] |= 0x20;
+                bufferPtr = mRunTraceLastBuffer + 2;
                 *(unsigned int*)bufferPtr = (unsigned int)relativeIP;
                 bufferPtr += 4;
             }
@@ -303,7 +343,7 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             if(TID != mRunTraceLastTID && pageInfo.runTraceInfo.TID)
             {
                 // always store TID in 4 bytes
-                buffer[0] |= 0x08;
+                mRunTraceLastBuffer[0] |= 0x08;
                 *(unsigned int*)bufferPtr = TID;
                 bufferPtr += 4;
             }
@@ -311,82 +351,67 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             // save code bytes if enabled
             if(pageInfo.runTraceInfo.CodeBytes)
             {
-                buffer[1] = (instruction->Size() & 0x0F) << 4;
+                mRunTraceLastBuffer[1] = (instruction->Size() & 0x0F) << 4;
                 memcpy(bufferPtr, instructionDump, instruction->Size());
                 bufferPtr += instruction->Size();
             }
             // save operand count
-            buffer[1] |= (regReadCount + regWriteCount) & 0x0F;
-            for(i = 0; i < regReadCount; i++)
-            {
-                unsigned int registerSize = 0;
-                unsigned short operandName = CapstoneRegToTraceRecordName((x86_reg)regRead[i]);
-                CapstoneReadReg(&context, operandName, buffer + 512, &registerSize);
-                memcpy(&operandsBuffer[operandsSize + 1], &operandName, 2);
-                switch(registerSize)
-                {
-                case 1:
-                    break;
-                case 2:
-                    operandsBuffer[operandsSize] |= 1;
-                    break;
-                case 4:
-                    operandsBuffer[operandsSize] |= 2;
-                    break;
-                case 8:
-                    operandsBuffer[operandsSize] |= 3;
-                    break;
-                case 16:
-                    operandsBuffer[operandsSize] |= 4;
-                    break;
-                case 32:
-                    operandsBuffer[operandsSize] |= 5;
-                    break;
-                default:
-                    //TODO
-                }
-                operandsSize += 3;
-                memcpy(operandsBuffer + operandsSize, buffer + 512, registerSize);
-                operandsSize += registerSize;
-            }
-            if(operandsSize == 0)
-            {
-                //nothing to change. every bit is 0
-            }
-            else if(operandsSize <= 0xff)
-            {
-                buffer[0] |= 0x01;
-                *bufferPtr = operandsSize;
-                bufferPtr++;
-            }
-#ifdef _WIN64
-            else if(operandsSize <= 0xffffffff)
-#else //x86
-            else
-#endif //_WIN64
-            {
-                buffer[0] |= 0x02;
-                memcpy(bufferPtr, &operandsSize, 4);
-                bufferPtr += 4;
-            }
-#ifdef _WIN64
-            else
-            {
-                buffer[0] |= 0x03;
-                memcpy(bufferPtr, &operandsSize, 8);
-                bufferPtr += 8;
-            }
-#endif //_WIN64
-            if(operandsSize != 0)
-            {
-                memcpy(bufferPtr, operandsBuffer, operandsSize);
-                bufferPtr += operandsSize;
-            }
-
+            mRunTraceLastBuffer[1] |= (regReadCount + regWriteCount) & 0x0F;
+            // save operands
+            ComposeRunTraceOperandBuffer(&context, false, operandsBuffer, &operandsSize, &regRead, regReadCount);
+            memcpy(mRunTraceLastWritten, regWrite, sizeof(cs_regs));
+            mRunTraceLastWrittenCount = regWriteCount;
         }
         mRunTraceLastIP = address + instruction->Size();
         mRunTraceLastTID = TID;
     }
+}
+
+/**
+@brief ComposeRunTraceOperandBuffer Write the registers and content specified in mRunTraceLastWritten, to x64dbg's binary format, in buffer.
+@param[in] context The CPU context
+@param[in] rw Set the old/new bit in the buffer. false is old data, true is new data.
+@param[out] buffer The output buffer.
+@param[out] BufferSize Output the buffer size written.
+*/
+void TraceRecordManager::ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, int* bufferSize, const cs_regs* registers, unsigned char registersCount)
+{
+    int operandsSize = 0;
+    for(int i = 0; i < registersCount; i++)
+    {
+        unsigned int registerSize = 0;
+        unsigned short operandName = CapstoneRegToTraceRecordName((x86_reg) * registers[i]);
+        CapstoneReadReg(context, operandName, buffer + 512, &registerSize);
+        memcpy(&buffer[operandsSize + 1], &operandName, 2);
+        switch(registerSize)
+        {
+        case 1:
+            break;
+        case 2:
+            buffer[operandsSize] |= 1;
+            break;
+        case 4:
+            buffer[operandsSize] |= 2;
+            break;
+        case 8:
+            buffer[operandsSize] |= 3;
+            break;
+        case 16:
+            buffer[operandsSize] |= 4;
+            break;
+        case 32:
+            buffer[operandsSize] |= 5;
+            break;
+        default:
+            //TODO
+        }
+        if(rw)
+            buffer[operandsSize] |= 8;
+        operandsSize += 3;
+        memcpy(buffer + operandsSize, buffer + 512, registerSize);
+        operandsSize += registerSize;
+    }
+    *bufferSize = operandsSize;
 }
 
 unsigned int TraceRecordManager::getHitCount(duint address)
@@ -416,6 +441,23 @@ unsigned int TraceRecordManager::getHitCount(duint address)
     }
 }
 
+unsigned int TraceRecordManager::getTraceRecordSize(TraceRecordType byteType)
+{
+    switch(byteType)
+    {
+    default:
+        return 0;
+    case TraceRecordType::TraceRecordBitExec:
+        return 4096 / 8;
+    case TraceRecordType::TraceRecordByteWithExecTypeAndCounter:
+        return 4096;
+    case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
+        return 4096 * 2;
+    case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+        return 4096 * 4;
+    }
+}
+
 TraceRecordManager::TraceRecordByteType TraceRecordManager::getByteType(duint address)
 {
     SHARED_ACQUIRE(LockTraceRecord);
@@ -436,13 +478,10 @@ TraceRecordManager::TraceRecordByteType TraceRecordManager::getByteType(duint ad
             return (TraceRecordByteType)((((char*)pageInfo.rawPtr)[offset] & 0xC0) >> 6);
         case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
             return (TraceRecordByteType)((((short*)pageInfo.rawPtr)[offset] & 0xC000) >> 14);
+        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
+            return (TraceRecordByteType)((((unsigned int*)pageInfo.rawPtr)[offset] & 0xF0000000) >> 28);
         }
     }
-}
-
-void TraceRecordManager::increaseInstructionCounter()
-{
-    InterlockedIncrement(&instructionCounter);
 }
 
 void TraceRecordManager::saveToDb(JSON root)
@@ -464,24 +503,7 @@ void TraceRecordManager::saveToDb(JSON root)
         }
         json_object_set_new(jsonObj, "type", json_hex((duint)i.second.dataType));
         auto ptr = (unsigned char*)i.second.rawPtr;
-        duint size = 0;
-        switch(i.second.dataType)
-        {
-        case TraceRecordType::TraceRecordBitExec:
-            size = 4096 / 8;
-            break;
-        case TraceRecordType::TraceRecordByteWithExecTypeAndCounter:
-            size = 4096;
-            break;
-        case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
-            size = 4096 * 2;
-            break;
-        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
-            size = 4096 * 4;
-            break;
-        default:
-            __debugbreak(); // We have encountered an error condition.
-        }
+        duint size = getTraceRecordSize(i.second.dataType);
         auto hex = StringUtils::ToCompressedHex(ptr, size);
         json_object_set_new(jsonObj, "data", json_string(hex.c_str()));
         json_array_append_new(jsonTraceRecords, jsonObj);
@@ -511,24 +533,7 @@ void TraceRecordManager::loadFromDb(JSON root)
         size_t size;
         currentPage.dataType = (TraceRecordType)json_hex_value(json_object_get(value, "type"));
         currentPage.rva = (duint)json_hex_value(json_object_get(value, "rva"));
-        switch(currentPage.dataType)
-        {
-        case TraceRecordType::TraceRecordBitExec:
-            size = 4096 / 8;
-            break;
-        case TraceRecordType::TraceRecordByteWithExecTypeAndCounter:
-            size = 4096;
-            break;
-        case TraceRecordType::TraceRecordWordWithExecTypeAndCounter:
-            size = 4096 * 2;
-            break;
-        case TraceRecordType::TraceRecordDWordWithAccessTypeAndAddr:
-            size = 4096 * 4;
-            break;
-        default:
-            size = 0;
-            break;
-        }
+        size = getTraceRecordSize(currentPage.dataType);
         if(size != 0)
         {
             currentPage.rawPtr = emalloc(size, "TraceRecordManager");
@@ -1305,7 +1310,6 @@ void _dbg_dbgtraceexecute(duint CIP)
         unsigned char buffer[MAX_DISASM_BUFFER];
         if(MemRead(CIP, buffer, MAX_DISASM_BUFFER))
         {
-            TraceRecord.increaseInstructionCounter();
             Capstone instruction;
             instruction.Disassemble(CIP, buffer, MAX_DISASM_BUFFER);
             TraceRecord.TraceExecute(CIP, instruction.Size(), &instruction, buffer);
@@ -1315,8 +1319,6 @@ void _dbg_dbgtraceexecute(duint CIP)
             // if we reaches here, then the executable had executed an invalid address. Don't trace it.
         }
     }
-    else
-        TraceRecord.increaseInstructionCounter();
 }
 
 unsigned int _dbg_dbggetTraceRecordHitCount(duint address)
