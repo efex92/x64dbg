@@ -93,25 +93,14 @@ extern "C" DLL_EXPORT bool _dbg_isdebugging()
 
 extern "C" DLL_EXPORT bool _dbg_isjumpgoingtoexecute(duint addr)
 {
-    static duint cacheFlags;
-    static duint cacheAddr;
-    static duint cacheCx;
-    static bool cacheResult;
-    if(cacheAddr != addr || cacheFlags != cacheCflags || cacheCx != cacheCcx)
+    unsigned char data[16];
+    if(MemRead(addr, data, sizeof(data), nullptr, true))
     {
-        cacheFlags = cacheCflags;
-        cacheCx = cacheCcx;
-        cacheAddr = addr;
-        cacheResult = false;
-        unsigned char data[16];
-        if(MemRead(addr, data, sizeof(data), nullptr, true))
-        {
-            Capstone cp;
-            if(cp.Disassemble(addr, data))
-                cacheResult = cp.IsBranchGoingToExecute(cacheFlags, cacheCx);
-        }
+        Capstone cp;
+        if(cp.Disassemble(addr, data))
+            return cp.IsBranchGoingToExecute(cacheCflags, cacheCcx);
     }
-    return cacheResult;
+    return false;
 }
 
 static bool shouldFilterSymbol(const char* name)
@@ -272,6 +261,8 @@ extern "C" DLL_EXPORT bool _dbg_addrinfoget(duint addr, SEGMENTREG segment, ADDR
                         auto constant = instr.arg[i].constant;
                         if(instr.arg[i].value == addr + instr.instr_size && strstr(instr.instruction, "call"))
                             temp_string.assign("call $0");
+                        else if(instr.arg[i].value == addr + instr.instr_size && strstr(instr.instruction, "jmp"))
+                            temp_string.assign("jmp $0");
                         else if(instr.type == instr_branch)
                             continue;
                         else if(instr.arg[i].type == arg_normal && constant < 256 && (isprint(int(constant)) || isspace(int(constant))) && (strstr(instr.instruction, "cmp") || strstr(instr.instruction, "mov")))

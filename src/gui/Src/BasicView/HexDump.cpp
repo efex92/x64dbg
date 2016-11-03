@@ -26,6 +26,8 @@ HexDump::HexDump(QWidget* parent)
 
     mRvaDisplayEnabled = false;
     mSyncAddrExpression = "";
+    mNonprintReplace = QChar(0x25CA);
+    mNullReplace = QChar(0x2022);
 
     historyClear();
 
@@ -54,6 +56,11 @@ void HexDump::updateColors()
 
 void HexDump::updateFonts()
 {
+    duint setting;
+    if(BridgeSettingGetUint("GUI", "NonprintReplaceCharacter", &setting))
+        mNonprintReplace = QChar(uint(setting));
+    if(BridgeSettingGetUint("GUI", "NullReplaceCharacter", &setting))
+        mNullReplace = QChar(uint(setting));
     setFont(ConfigFont("HexDump"));
     invalidateCachedFont();
 }
@@ -729,10 +736,12 @@ QString HexDump::byteToString(byte_t byte, ByteViewMode_e mode)
     {
         QChar wChar = QChar::fromLatin1((char)byte);
 
-        if(wChar.isPrint() == true)
+        if(wChar.isPrint())
             wStr = QString(wChar);
+        else if(!wChar.unicode())
+            wStr = mNullReplace;
         else
-            wStr = ".";
+            wStr = mNonprintReplace;
     }
     break;
 
@@ -773,10 +782,12 @@ QString HexDump::wordToString(uint16 word, WordViewMode_e mode)
     case UnicodeWord:
     {
         QChar wChar = QChar::fromLatin1((char)word & 0xFF);
-        if(wChar.isPrint() == true && (word >> 8) == 0)
+        if(wChar.isPrint() && (word >> 8) == 0)
             wStr = QString(wChar);
+        else if(!wChar.unicode())
+            wStr = mNullReplace;
         else
-            wStr = ".";
+            wStr = mNonprintReplace;
     }
     break;
 

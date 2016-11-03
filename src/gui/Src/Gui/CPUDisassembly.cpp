@@ -1,4 +1,6 @@
 #include <QMessageBox>
+#include <QFileDialog>
+#include <QFile>
 #include <QDesktopServices>
 #include <QClipboard>
 #include "CPUDisassembly.h"
@@ -27,7 +29,6 @@ CPUDisassembly::CPUDisassembly(CPUWidget* parent) : Disassembly(parent)
     setWindowTitle("Disassembly");
 
     // Set specific widget handles
-    mGoto = nullptr;
     mParentCPUWindow = parent;
 
     // Create the action list for the right click context menu
@@ -236,11 +237,23 @@ void CPUDisassembly::setupRightClickContextMenu()
 
     MenuBuilder* copyMenu = new MenuBuilder(this);
     copyMenu->addAction(makeShortcutAction(DIcon("copy_selection.png"), tr("&Selection"), SLOT(copySelectionSlot()), "ActionCopy"));
+    copyMenu->addAction(makeAction(DIcon("copy_selection.png"), tr("Selection to &File"), SLOT(copySelectionToFileSlot())));
     copyMenu->addAction(makeAction(DIcon("copy_selection_no_bytes.png"), tr("Selection (&No Bytes)"), SLOT(copySelectionNoBytesSlot())));
+    copyMenu->addAction(makeAction(DIcon("copy_selection_no_bytes.png"), tr("Selection to File (No Bytes)"), SLOT(copySelectionToFileNoBytesSlot())));
     copyMenu->addAction(makeShortcutAction(DIcon("copy_address.png"), tr("&Address"), SLOT(copyAddressSlot()), "ActionCopyAddress"));
     copyMenu->addAction(makeAction(DIcon("copy_address.png"), tr("&RVA"), SLOT(copyRvaSlot())));
     copyMenu->addAction(makeAction(DIcon("copy_disassembly.png"), tr("Disassembly"), SLOT(copyDisassemblySlot())));
     copyMenu->addAction(makeAction(DIcon("data-copy.png"), tr("&Data..."), SLOT(copyDataSlot())));
+
+    copyMenu->addMenu(makeMenu(DIcon("copy_selection.png"), tr("Symbolic Name")), [this](QMenu * menu)
+    {
+        QSet<QString> labels;
+        if(!getLabelsFromInstruction(rvaToVa(getInitialSelection()), labels))
+            return false;
+        for(auto label : labels)
+            menu->addAction(makeAction(label, SLOT(labelCopySlot())));
+        return true;
+    });
     mMenuBuilder->addMenu(makeMenu(DIcon("copy.png"), tr("&Copy")), copyMenu);
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("eraser.png"), tr("&Restore selection"), SLOT(undoSelectionSlot()), "ActionUndoSelection"), [this](QMenu*)
@@ -332,7 +345,7 @@ void CPUDisassembly::setupRightClickContextMenu()
 
     mMenuBuilder->addAction(makeAction(DIcon("memmap_find_address_page.png"), tr("Follow in Memory Map"), SLOT(followInMemoryMapSlot())));
 
-    mMenuBuilder->addAction(makeAction(DIcon("source.png"), tr("Open Source File"), SLOT(openSourceSlot())), [this](QMenu*)
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("source.png"), tr("Open Source File"), SLOT(openSourceSlot()), "ActionOpenSourceFile"), [this](QMenu*)
     {
         return DbgFunctions()->GetSourceFromAddr(rvaToVa(getInitialSelection()), 0, 0);
     });
@@ -1044,13 +1057,14 @@ void CPUDisassembly::gotoFileOffsetSlot()
         QMessageBox::critical(this, tr("Error!"), tr("Not inside a module..."));
         return;
     }
-    GotoDialog mGotoDialog(this);
-    mGotoDialog.fileOffset = true;
-    mGotoDialog.modName = QString(modname);
-    mGotoDialog.setWindowTitle(tr("Goto File Offset in ") + QString(modname));
-    if(mGotoDialog.exec() != QDialog::Accepted)
+    if(!mGotoOffset)
+        mGotoOffset = new GotoDialog(this);
+    mGotoOffset->fileOffset = true;
+    mGotoOffset->modName = QString(modname);
+    mGotoOffset->setWindowTitle(tr("Goto File Offset in ") + QString(modname));
+    if(mGotoOffset->exec() != QDialog::Accepted)
         return;
-    duint value = DbgValFromString(mGotoDialog.expressionText.toUtf8().constData());
+    duint value = DbgValFromString(mGotoOffset->expressionText.toUtf8().constData());
     value = DbgFunctions()->FileOffsetToVa(modname, value);
     DbgCmdExec(QString().sprintf("disasm \"%p\"", value).toUtf8().constData());
 }
@@ -1395,38 +1409,61 @@ void CPUDisassembly::yaraSlot()
 
 void CPUDisassembly::copySelectionSlot(bool copyBytes)
 {
-    QList<Instruction_t> instBuffer;
-    prepareDataRange(getSelectionStart(), getSelectionEnd(), &instBuffer);
-    QString clipboard = "";
+    QString selectionString = "";
+
+    QTextStream stream(&selectionString);
+    pushSelectionInto(copyBytes, stream);
+    Bridge::CopyToClipboard(selectionString);
+}
+
+void CPUDisassembly::copySelectionToFileSlot(bool copyBytes)
+{
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Open File"), "", tr("Text Files (*.txt)"));
+    if(fileName != "")
+    {
+        QFile file(fileName);
+        if(!file.open(QIODevice::WriteOnly))
+        {
+            QMessageBox::critical(this, tr("Error"), tr("Could not open file"));
+            return;
+        }
+
+        QTextStream stream(&file);
+        pushSelectionInto(copyBytes, stream);
+        file.close();
+    }
+}
+
+void CPUDisassembly::pushSelectionInto(bool copyBytes, QTextStream & stream)
+{
     const int addressLen = getColumnWidth(0) / getCharWidth() - 1;
     const int bytesLen = getColumnWidth(1) / getCharWidth() - 1;
     const int disassemblyLen = getColumnWidth(2) / getCharWidth() - 1;
-    for(int i = 0; i < instBuffer.size(); i++)
+    prepareDataRange(getSelectionStart(), getSelectionEnd(), [&](int i, const Instruction_t & inst)
     {
         if(i)
-            clipboard += "\r\n";
-        dsint cur_addr = rvaToVa(instBuffer.at(i).rva);
-        QString address = getAddrText(cur_addr, 0);
+            stream << "\r\n";
+        dsint cur_addr = rvaToVa(inst.rva);
+        QString address = getAddrText(cur_addr, 0, addressLen > sizeof(duint) * 2 + 1);
         QString bytes;
-        for(int j = 0; j < instBuffer.at(i).dump.size(); j++)
+        for(int j = 0; j < inst.dump.size(); j++)
         {
             if(j)
                 bytes += " ";
-            bytes += ToByteString((unsigned char)(instBuffer.at(i).dump.at(j)));
+            bytes += ToByteString((unsigned char)(inst.dump.at(j)));
         }
         QString disassembly;
-        for(const auto & token : instBuffer.at(i).tokens.tokens)
+        for(const auto & token : inst.tokens.tokens)
             disassembly += token.text;
         QString fullComment;
         QString comment;
         if(GetCommentFormat(cur_addr, comment))
             fullComment = " " + comment;
-        clipboard += address.leftJustified(addressLen, QChar(' '), true);
+        stream << address.leftJustified(addressLen, QChar(' '), true);
         if(copyBytes)
-            clipboard += " | " + bytes.leftJustified(bytesLen, QChar(' '), true);
-        clipboard += " | " + disassembly.leftJustified(disassemblyLen, QChar(' '), true) + " |" + fullComment;
-    }
-    Bridge::CopyToClipboard(clipboard);
+            stream << " | " + bytes.leftJustified(bytesLen, QChar(' '), true);
+        stream << " | " + disassembly.leftJustified(disassemblyLen, QChar(' '), true) + " |" + fullComment;
+    });
 }
 
 void CPUDisassembly::copySelectionSlot()
@@ -1434,9 +1471,19 @@ void CPUDisassembly::copySelectionSlot()
     copySelectionSlot(true);
 }
 
+void CPUDisassembly::copySelectionToFileSlot()
+{
+    copySelectionToFileSlot(true);
+}
+
 void CPUDisassembly::copySelectionNoBytesSlot()
 {
     copySelectionSlot(false);
+}
+
+void CPUDisassembly::copySelectionToFileNoBytesSlot()
+{
+    copySelectionToFileSlot(false);
 }
 
 void CPUDisassembly::copyAddressSlot()
@@ -1460,16 +1507,14 @@ void CPUDisassembly::copyRvaSlot()
 
 void CPUDisassembly::copyDisassemblySlot()
 {
-    QList<Instruction_t> instBuffer;
-    prepareDataRange(getSelectionStart(), getSelectionEnd(), &instBuffer);
     QString clipboard = "";
-    for(int i = 0; i < instBuffer.size(); i++)
+    prepareDataRange(getSelectionStart(), getSelectionEnd(), [&](int i, const Instruction_t & inst)
     {
         if(i)
             clipboard += "\r\n";
-        for(const auto & token : instBuffer.at(i).tokens.tokens)
+        for(const auto & token : inst.tokens.tokens)
             clipboard += token.text;
-    }
+    });
     Bridge::CopyToClipboard(clipboard);
 }
 
@@ -1482,6 +1527,12 @@ void CPUDisassembly::copyDataSlot()
     mMemPage->read(data.data(), selStart, selSize);
     DataCopyDialog dataDialog(&data, this);
     dataDialog.exec();
+}
+
+void CPUDisassembly::labelCopySlot()
+{
+    QString symbol = ((QAction*)sender())->text();
+    Bridge::CopyToClipboard(symbol);
 }
 
 void CPUDisassembly::findCommandSlot()

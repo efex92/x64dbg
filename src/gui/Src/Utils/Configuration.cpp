@@ -220,7 +220,14 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     insertMenuBuilderBools(&guiBool, "CallStackView", 50); //CallStackView
     insertMenuBuilderBools(&guiBool, "ThreadView", 50); //Thread
     insertMenuBuilderBools(&guiBool, "CPUStack", 50); //Stack
+    insertMenuBuilderBools(&guiBool, "SourceView", 10); //Source
     insertMenuBuilderBools(&guiBool, "DisassemblerGraphView", 50); //Graph
+    insertMenuBuilderBools(&guiBool, "File", 50); //Main Menu : File
+    insertMenuBuilderBools(&guiBool, "Debug", 50); //Main Menu : Debug
+    insertMenuBuilderBools(&guiBool, "Option", 50); //Main Menu : Option
+    //"Favourites" menu cannot be customized for item hiding.
+    insertMenuBuilderBools(&guiBool, "Help", 50); //Main Menu : Help
+    insertMenuBuilderBools(&guiBool, "View", 50); //Main Menu : View
     defaultBools.insert("Gui", guiBool);
 
     QMap<QString, duint> guiUint;
@@ -476,6 +483,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionRefresh", Shortcut(tr("Actions -> Refresh"), "F5"));
     defaultShortcuts.insert("ActionGraph", Shortcut(tr("Actions -> Graph"), "G"));
     defaultShortcuts.insert("ActionGraphFollowDisassembler", Shortcut(tr("Actions -> Graph -> Follow in disassembler"), "Shift+Return"));
+    defaultShortcuts.insert("ActionGraphSaveImage", Shortcut(tr("Actions -> Graph -> Save as Image"), "S"));
     defaultShortcuts.insert("ActionGraphToggleOverview", Shortcut(tr("Actions -> Graph -> Toggle overview"), "O"));
     defaultShortcuts.insert("ActionGraphRefresh", Shortcut(tr("Actions -> Graph -> Refresh"), "R"));
     defaultShortcuts.insert("ActionGraphSyncOrigin", Shortcut(tr("Actions -> Graph -> Toggle sync with origin"), "S"));
@@ -488,6 +496,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionDownloadSymbol", Shortcut(tr("Actions -> Download Symbols for This Module")));
     defaultShortcuts.insert("ActionDownloadAllSymbol", Shortcut(tr("Actions -> Download Symbols for All Modules")));
     defaultShortcuts.insert("ActionCreateNewThreadHere", Shortcut(tr("Actions -> Create New Thread Here")));
+    defaultShortcuts.insert("ActionOpenSourceFile", Shortcut(tr("Actions -> Open Source File")));
 
     Shortcuts = defaultShortcuts;
 
@@ -1001,11 +1010,14 @@ bool Configuration::shortcutToConfig(const QString id, const QKeySequence shortc
 
 void Configuration::registerMenuBuilder(MenuBuilder* menu, size_t count)
 {
-    bool exists = false;
-    const char* id = menu->getId();
+    QString id = menu->getId();
     for(const auto & i : NamedMenuBuilders)
-        if(strcmp(i.first->getId() , id) == 0)
-            exists = true;
-    if(!exists)
-        NamedMenuBuilders.push_back(std::make_pair(menu, count));
+        if(i.type == 0 && i.builder->getId() == id)
+            return; //already exists
+    NamedMenuBuilders.append(MenuMap(menu, count));
+}
+
+void Configuration::registerMainMenuStringList(QList<QAction*>* menu)
+{
+    NamedMenuBuilders.append(MenuMap(menu, menu->size() - 1));
 }

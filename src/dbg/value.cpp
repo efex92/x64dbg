@@ -15,6 +15,7 @@
 #include "expressionparser.h"
 #include "function.h"
 #include "threading.h"
+#include "TraceRecord.h"
 
 static bool dosignedcalc = false;
 
@@ -176,6 +177,8 @@ static bool isregister(const char* string)
     if(scmp(string, "cip"))
         return true;
     if(scmp(string, "csp"))
+        return true;
+    if(scmp(string, "cbp"))
         return true;
     if(scmp(string, "cflags"))
         return true;
@@ -860,6 +863,14 @@ duint getregister(int* size, const char* string)
     {
         return GetContextDataEx(hActiveThread, UE_CSP);
     }
+    if(scmp(string, "cbp"))
+    {
+#ifdef _WIN64
+        return GetContextDataEx(hActiveThread, UE_RBP);
+#else
+        return GetContextDataEx(hActiveThread, UE_EBP);
+#endif //_WIN64
+    }
     if(scmp(string, "cflags"))
     {
         return GetContextDataEx(hActiveThread, UE_CFLAGS);
@@ -1167,6 +1178,12 @@ bool setregister(const char* string, duint value)
         return SetContextDataEx(hActiveThread, UE_CIP, value);
     if(scmp(string, "csp"))
         return SetContextDataEx(hActiveThread, UE_CSP, value);
+    if(scmp(string, "cbp"))
+#ifdef _WIN64
+        return SetContextDataEx(hActiveThread, UE_RBP, value);
+#else
+        return SetContextDataEx(hActiveThread, UE_EBP, value);
+#endif //_WIN64
     if(scmp(string, "cflags"))
         return SetContextDataEx(hActiveThread, UE_CFLAGS, value);
 
@@ -2266,7 +2283,11 @@ bool valtostring(const char* string, duint value, bool silent)
         strcpy_s(regName(), len + 1, string);
         _strlwr(regName());
         if(strstr(regName(), "ip"))
-            DebugUpdateGuiAsync(GetContextDataEx(hActiveThread, UE_CIP), false); //update disassembly + register view
+        {
+            auto cip = GetContextDataEx(hActiveThread, UE_CIP);
+            _dbg_dbgtraceexecute(cip);
+            DebugUpdateGuiAsync(cip, false); //update disassembly + register view
+        }
         else if(strstr(regName(), "sp")) //update stack
         {
             duint csp = GetContextDataEx(hActiveThread, UE_CSP);

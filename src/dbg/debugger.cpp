@@ -36,22 +36,125 @@ struct TraceCondition
     duint steps;
     duint maxSteps;
 
-    explicit TraceCondition(String expression, duint maxCount)
+    explicit TraceCondition(const String & expression, duint maxCount)
         : condition(expression), steps(0), maxSteps(maxCount) {}
 
-    inline bool ContinueTrace()
+    bool BreakTrace()
     {
         steps++;
         if(steps >= maxSteps)
-            return false;
-        duint value = 1;
-        return condition.Calculate(value, valuesignedcalc(), true) && !value;
+            return true;
+        duint value;
+        return !condition.Calculate(value, valuesignedcalc(), true) || value;
     }
+};
+
+struct TextCondition
+{
+    ExpressionParser condition;
+    String text;
+
+    explicit TextCondition(const String & expression, const String & text)
+        : condition(expression), text(text) {}
+
+    bool Evaluate(bool defaultValue) const
+    {
+        duint value;
+        if(condition.Calculate(value, valuesignedcalc(), true))
+            return !!value;
+        return defaultValue;
+    }
+};
+
+struct TraceState
+{
+    bool InitTraceCondition(const String & expression, duint maxSteps)
+    {
+        delete traceCondition;
+        traceCondition = new TraceCondition(expression, maxSteps);
+        return traceCondition->condition.IsValidExpression();
+    }
+
+    bool IsActive() const
+    {
+        return traceCondition != nullptr;
+    }
+
+    bool IsExtended() const
+    {
+        return logCondition || cmdCondition;
+    }
+
+    bool BreakTrace() const
+    {
+        return !traceCondition || traceCondition->BreakTrace();
+    }
+
+    duint StepCount() const
+    {
+        return traceCondition ? traceCondition->steps : 0;
+    }
+
+    bool InitLogCondition(const String & expression, const String & text)
+    {
+        delete logCondition;
+        logCondition = nullptr;
+        if(text.empty())
+            return true;
+        logCondition = new TextCondition(expression, text);
+        return logCondition->condition.IsValidExpression();
+    }
+
+    bool EvaluateLog(bool defaultValue) const
+    {
+        return logCondition && logCondition->Evaluate(defaultValue);
+    }
+
+    const String & LogText() const
+    {
+        return logCondition ? logCondition->text : emptyString;
+    }
+
+    bool InitCmdCondition(const String & expression, const String & text)
+    {
+        delete cmdCondition;
+        cmdCondition = nullptr;
+        if(text.empty())
+            return true;
+        cmdCondition = new TextCondition(expression, text);
+        return cmdCondition->condition.IsValidExpression();
+    }
+
+    bool EvaluateCmd(bool defaultValue) const
+    {
+        return cmdCondition && cmdCondition->Evaluate(defaultValue);
+    }
+
+    const String & CmdText() const
+    {
+        return cmdCondition ? cmdCondition->text : emptyString;
+    }
+
+    void Clear()
+    {
+        delete traceCondition;
+        traceCondition = nullptr;
+        delete logCondition;
+        logCondition = nullptr;
+        delete cmdCondition;
+        cmdCondition = nullptr;
+    }
+
+private:
+    TraceCondition* traceCondition = nullptr;
+    TextCondition* logCondition = nullptr;
+    TextCondition* cmdCondition = nullptr;
+    String emptyString;
 };
 
 static PROCESS_INFORMATION g_pi = {0, 0, 0, 0};
 static char szBaseFileName[MAX_PATH] = "";
-static TraceCondition* traceCondition = nullptr;
+static TraceState traceState;
 static bool bFileIsDll = false;
 static duint pDebuggedBase = 0;
 static duint pCreateProcessBase = 0;
@@ -93,15 +196,10 @@ bool bIgnoreInconsistentBreakpoints = false;
 bool bNoForegroundWindow = false;
 duint DbgEvents = 0;
 
-static duint dbgcleartracecondition()
+static duint dbgcleartracestate()
 {
-    duint steps = 0;
-    if(traceCondition)
-    {
-        steps = traceCondition->steps;
-        delete traceCondition;
-    }
-    traceCondition = nullptr;
+    auto steps = traceState.StepCount();
+    traceState.Clear();
     return steps;
 }
 
@@ -121,16 +219,29 @@ bool dbgsettracecondition(const String & expression, duint maxSteps)
 {
     if(dbgtraceactive())
         return false;
-    traceCondition = new TraceCondition(expression, maxSteps);
-    if(traceCondition->condition.IsValidExpression())
+    if(traceState.InitTraceCondition(expression, maxSteps))
         return true;
-    dbgcleartracecondition();
+    dbgcleartracestate();
     return false;
+}
+
+bool dbgsettracelog(const String & expression, const String & text)
+{
+    if(dbgtraceactive())
+        return false;
+    return traceState.InitLogCondition(expression, text);
+}
+
+bool dbgsettracecmd(const String & expression, const String & text)
+{
+    if(dbgtraceactive())
+        return false;
+    return traceState.InitCmdCondition(expression, text);
 }
 
 bool dbgtraceactive()
 {
-    return traceCondition != nullptr;
+    return traceState.IsActive();
 }
 
 static DWORD WINAPI memMapThread(void* ptr)
@@ -183,12 +294,14 @@ static DWORD WINAPI dumpRefreshThread(void* ptr)
         {
             if(bStopDumpRefreshThread)
                 break;
-            Sleep(10);
+            Sleep(100);
         }
         if(bStopDumpRefreshThread)
             break;
         GuiUpdateDumpView();
-        Sleep(200);
+        GuiUpdatePatches();
+        GuiUpdateWatchView();
+        Sleep(400);
     }
     return 0;
 }
@@ -199,7 +312,7 @@ static DWORD WINAPI dumpRefreshThread(void* ptr)
 void cbDebuggerPaused()
 {
     // Clear tracing conditions
-    dbgcleartracecondition();
+    dbgcleartracestate();
     dbgClearRtuBreakpoints();
     // Trace record is not handled by this function currently.
     // Signal thread switch warning
@@ -414,14 +527,15 @@ void DebugUpdateGui(duint disasm_addr, bool stack)
         strcat_s(threadName, " ");
     sprintf_s(title, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "File: %s - PID: %X - %sThread: %s%X%s")), szBaseFileName, fdProcessInfo->dwProcessId, modtext, threadName, currentThreadId, threadswitch);
     GuiUpdateWindowTitle(title);
-    GuiUpdateAllViews();
+    GuiUpdateRegisterView();
+    GuiUpdateDisassemblyView();
+    GuiUpdateThreadView();
+    GuiUpdateSideBar();
 }
 
 void DebugUpdateGuiSetState(duint disasm_addr, bool stack, DBGSTATE state = paused)
 {
     GuiSetDebugState(state);
-    if(state == initialized)
-        GuiFocusView(GUI_DISASSEMBLY);
     DebugUpdateGui(disasm_addr, stack);
 }
 
@@ -733,7 +847,7 @@ static void cbGenericBreakpoint(BP_TYPE bptype, void* ExceptionAddress = nullptr
         bp.addr += ModBaseFromAddr(CIP);
     bp.active = true; //a breakpoint that has been hit is active
 
-    varset("$breakpointcounter", bp.hitcount, false); //save the breakpoint counter as a variable
+    varset("$breakpointcounter", bp.hitcount, true); //save the breakpoint counter as a variable
 
     //get condition values
     bool breakCondition;
@@ -778,12 +892,10 @@ static void cbGenericBreakpoint(BP_TYPE bptype, void* ExceptionAddress = nullptr
     {
         //TODO: commands like run/step etc will fuck up your shit
         varset("$breakpointcondition", breakCondition ? 1 : 0, false);
-        varset("$breakpointlogcondition", logCondition, false);
+        varset("$breakpointlogcondition", logCondition ? 1 : 0, true);
         _dbg_dbgcmddirectexec(bp.commandText);
         duint script_breakcondition;
-        int size;
-        VAR_TYPE type;
-        if(varget("$breakpointcondition", &script_breakcondition, &size, &type))
+        if(varget("$breakpointcondition", &script_breakcondition, nullptr, nullptr))
         {
             if(script_breakcondition != 0)
             {
@@ -1039,7 +1151,7 @@ void cbStep()
 
 static void cbRtrFinalStep()
 {
-    dbgcleartracecondition();
+    dbgcleartracestate();
     hActiveThread = ThreadGetHandle(((DEBUG_EVENT*)GetDebugData())->dwThreadId);
     duint CIP = GetContextDataEx(hActiveThread, UE_CIP);
     // Trace record
@@ -1086,93 +1198,92 @@ void cbRtrStep()
     }
 }
 
-static void cbTXCNDStep(bool bStepInto, void (*callback)())
+static void cbTraceUniversalConditionalStep(duint cip, bool bStepInto, void(*callback)(), bool forceBreakTrace)
 {
-    hActiveThread = ThreadGetHandle(((DEBUG_EVENT*)GetDebugData())->dwThreadId);
-    auto CIP = GetContextDataEx(hActiveThread, UE_CIP);
     PLUG_CB_TRACEEXECUTE info;
-    info.cip = CIP;
-    info.stop = false;
+    info.cip = cip;
+    auto breakCondition = (info.stop = traceState.BreakTrace() || forceBreakTrace);
+    if(traceState.IsExtended()) //only set when needed
+        varset("$tracecounter", traceState.StepCount(), true);
     plugincbcall(CB_TRACEEXECUTE, &info);
-    if(!info.stop && traceCondition && traceCondition->ContinueTrace())
+    breakCondition = info.stop;
+    auto logCondition = traceState.EvaluateLog(true);
+    auto cmdCondition = traceState.EvaluateCmd(breakCondition);
+    if(logCondition) //log
+    {
+        dprintf_untranslated("%s\n", stringformatinline(traceState.LogText()).c_str());
+    }
+    if(cmdCondition) //command
+    {
+        //TODO: commands like run/step etc will fuck up your shit
+        varset("$tracecondition", breakCondition ? 1 : 0, false);
+        varset("$tracelogcondition", logCondition ? 1 : 0, true);
+        _dbg_dbgcmddirectexec(traceState.CmdText().c_str());
+        duint script_breakcondition;
+        if(varget("$tracecondition", &script_breakcondition, nullptr, nullptr))
+            breakCondition = script_breakcondition != 0;
+    }
+    if(breakCondition) //break the debugger
+    {
+        auto steps = dbgcleartracestate();
+        varset("$tracecounter", steps, true);
+#ifdef _WIN64
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %llu steps!\n"), steps);
+#else //x86
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %u steps!\n"), steps);
+#endif //_WIN64
+        cbRtrFinalStep();
+    }
+    else //continue tracing
     {
         if(bTraceRecordEnabledDuringTrace)
-            _dbg_dbgtraceexecute(CIP);
+            _dbg_dbgtraceexecute(cip);
         (bStepInto ? StepInto : StepOver)(callback);
     }
-    else
-    {
-        auto steps = dbgcleartracecondition();
-#ifdef _WIN64
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %llu steps!\n"), steps);
-#else //x86
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %u steps!\n"), steps);
-#endif //_WIN64
-        cbRtrFinalStep();
-    }
 }
 
-void cbTOCNDStep()
-{
-    cbTXCNDStep(false, cbTOCNDStep);
-}
-
-void cbTICNDStep()
-{
-    cbTXCNDStep(true, cbTICNDStep);
-}
-
-static void cbTXXTStep(bool bStepInto, bool bInto, void (*callback)())
+static void cbTraceXConditionalStep(bool bStepInto, void (*callback)())
 {
     hActiveThread = ThreadGetHandle(((DEBUG_EVENT*)GetDebugData())->dwThreadId);
-    // Trace record
-    duint CIP = GetContextDataEx(hActiveThread, UE_CIP);
-    PLUG_CB_TRACEEXECUTE info;
-    info.cip = CIP;
-    info.stop = false;
-    plugincbcall(CB_TRACEEXECUTE, &info);
-    if(!traceCondition)
-    {
-        _dbg_dbgtraceexecute(CIP);
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Bad tracing state.\n"));
-        cbRtrFinalStep();
-        return;
-    }
-    if(info.stop || !traceCondition->ContinueTrace() || (TraceRecord.getTraceRecordType(CIP) != TraceRecordManager::TraceRecordNone && (TraceRecord.getHitCount(CIP) == 0) ^ bInto))
-    {
-        _dbg_dbgtraceexecute(CIP);
-        auto steps = dbgcleartracecondition();
-#ifdef _WIN64
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %llu steps!\n"), steps);
-#else //x86
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Trace finished after %u steps!\n"), steps);
-#endif //_WIN64
-        cbRtrFinalStep();
-        return;
-    }
-    if(bTraceRecordEnabledDuringTrace)
-        _dbg_dbgtraceexecute(CIP);
-    (bStepInto ? StepInto : StepOver)(callback);
+    cbTraceUniversalConditionalStep(GetContextDataEx(hActiveThread, UE_CIP), bStepInto, callback, false);
 }
 
-void cbTIBTStep()
+static void cbTraceXXTraceRecordStep(bool bStepInto, bool bInto, void(*callback)())
 {
-    cbTXXTStep(true, false, cbTIBTStep);
+    hActiveThread = ThreadGetHandle(((DEBUG_EVENT*)GetDebugData())->dwThreadId);
+    auto cip = GetContextDataEx(hActiveThread, UE_CIP);
+    auto forceBreakTrace = TraceRecord.getTraceRecordType(cip) != TraceRecordManager::TraceRecordNone && (TraceRecord.getHitCount(cip) == 0) ^ bInto;
+    cbTraceUniversalConditionalStep(cip, bStepInto, callback, forceBreakTrace);
 }
 
-void cbTOBTStep()
+void cbTraceOverConditionalStep()
 {
-    cbTXXTStep(false, false, cbTOBTStep);
+    cbTraceXConditionalStep(false, cbTraceOverConditionalStep);
 }
 
-void cbTIITStep()
+void cbTraceIntoConditionalStep()
 {
-    cbTXXTStep(true, true, cbTIITStep);
+    cbTraceXConditionalStep(true, cbTraceIntoConditionalStep);
 }
 
-void cbTOITStep()
+void cbTraceIntoBeyondTraceRecordStep()
 {
-    cbTXXTStep(false, true, cbTOITStep);
+    cbTraceXXTraceRecordStep(true, false, cbTraceIntoBeyondTraceRecordStep);
+}
+
+void cbTraceOverBeyondTraceRecordStep()
+{
+    cbTraceXXTraceRecordStep(false, false, cbTraceOverBeyondTraceRecordStep);
+}
+
+void cbTraceIntoIntoTraceRecordStep()
+{
+    cbTraceXXTraceRecordStep(true, true, cbTraceIntoIntoTraceRecordStep);
+}
+
+void cbTraceOverIntoTraceRecordStep()
+{
+    cbTraceXXTraceRecordStep(false, true, cbTraceOverIntoTraceRecordStep);
 }
 
 static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
@@ -1312,7 +1423,7 @@ static void cbExitProcess(EXIT_PROCESS_DEBUG_INFO* ExitProcess)
     //unload main module
     SafeSymUnloadModule64(fdProcessInfo->hProcess, pCreateProcessBase);
     //history
-    dbgcleartracecondition();
+    dbgcleartracestate();
     dbgClearRtuBreakpoints();
     HistoryClear();
     ModClear(); //clear all modules
@@ -1724,7 +1835,7 @@ static void cbException(EXCEPTION_DEBUG_INFO* ExceptionData)
             MemUpdateMap();
             DebugUpdateGuiSetStateAsync(GetContextDataEx(hActiveThread, UE_CIP), true);
             // Clear tracing conditions
-            dbgcleartracecondition();
+            dbgcleartracestate();
             dbgClearRtuBreakpoints();
             //lock
             lock(WAITID_RUN);
@@ -1756,6 +1867,7 @@ static void cbException(EXCEPTION_DEBUG_INFO* ExceptionData)
             }
         }
     }
+    DbgCmdExecDirect("exinfo"); //show extended exception information
     auto exceptionName = ExceptionCodeToName(ExceptionCode);
     if(!exceptionName.size())  //if no exception was found, try the error codes (RPC_S_*)
         exceptionName = ErrorCodeToName(ExceptionCode);
@@ -2396,6 +2508,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
 
     //inform GUI we started without problems
     GuiSetDebugState(initialized);
+    GuiFocusView(GUI_DISASSEMBLY);
     GuiAddRecentFile(szFileName);
 
     //set GUI title
@@ -2447,7 +2560,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     RemoveAllBreakPoints(UE_OPTION_REMOVEALL); //remove all breakpoints
 
     //cleanup
-    dbgcleartracecondition();
+    dbgcleartracestate();
     dbgClearRtuBreakpoints();
     DbClose();
     ModClear();
