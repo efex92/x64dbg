@@ -80,10 +80,11 @@ public:
     char mRunTraceFileName[MAX_PATH];
     duint mRunTraceLastTID;
     duint mRunTraceLastIP;
-    cs_regs mRunTraceLastWritten;
-    unsigned char mRunTraceLastWrittenCount;
+    TITAN_ENGINE_CONTEXT_t mRunTracePreviousContext;
     unsigned char mRunTraceLastBuffer[672];
-    int mRunTraceLastBufferSize;
+    unsigned char mRunTraceLastOperands[672 * 2];
+    unsigned int mRunTraceLastBufferSize;
+    unsigned int mRunTraceLastOperandsSize;
 
 private:
 
@@ -116,7 +117,8 @@ private:
 
     static unsigned short CapstoneRegToTraceRecordName(x86_reg reg);
     static void CapstoneReadReg(TITAN_ENGINE_CONTEXT_t* context, unsigned short reg, unsigned char* buffer, unsigned int* size);
-    void ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, int* bufferSize, const cs_regs* registers, unsigned char registersCount);
+    static void ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, unsigned int* bufferSize, const cs_regs* registers, unsigned char registersCount);
+    void ComposeRunTraceWrittenBuffer(TITAN_ENGINE_CONTEXT_t* context, unsigned char* buffer, unsigned int* bufferSize);
 
     //Key := page base, value := trace record raw data
     std::unordered_map<duint, TraceRecordPage> TraceRecord;

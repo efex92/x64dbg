@@ -253,48 +253,48 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         {
             dsint relativeIP = address - mRunTraceLastIP;
             unsigned char operandsBuffer[620];
-            int operandsSize = 0;
+            unsigned int operandsSize = 0;
             unsigned char* bufferPtr = mRunTraceLastBuffer;
             unsigned char i;
             memset(operandsBuffer, 0, sizeof(operandsBuffer));
             // Process last instruction
+            ComposeRunTraceWrittenBuffer(&context, mRunTraceLastOperands + mRunTraceLastOperandsSize, &operandsSize);
             // save written registers
-            ComposeRunTraceOperandBuffer(&context, true, mRunTraceLastBuffer + mRunTraceLastBufferSize, &operandsSize, &mRunTraceLastWritten, mRunTraceLastWrittenCount);
-            mRunTraceLastBufferSize += operandsSize;
+            mRunTraceLastOperandsSize += operandsSize;
             operandsSize = 0;
             // save buffer of last instruction to file
-            if(operandsSize == 0)
+            if(mRunTraceLastOperandsSize == 0)
             {
                 //nothing to change. every bit is 0
             }
-            else if(operandsSize <= 0xff)
+            else if(mRunTraceLastOperandsSize <= 0xff)
             {
                 mRunTraceLastBuffer[0] |= 0x01;
-                *bufferPtr = operandsSize;
+                *bufferPtr = mRunTraceLastOperandsSize;
                 bufferPtr++;
             }
 #ifdef _WIN64
-            else if(operandsSize <= 0xffffffff)
+            else if(mRunTraceLastOperandsSize <= 0xffffffff)
 #else //x86
             else
 #endif //_WIN64
             {
                 mRunTraceLastBuffer[0] |= 0x02;
-                memcpy(bufferPtr, &operandsSize, 4);
+                memcpy(bufferPtr, &mRunTraceLastOperandsSize, 4);
                 bufferPtr += 4;
             }
 #ifdef _WIN64
             else
             {
                 mRunTraceLastBuffer[0] |= 0x03;
-                memcpy(bufferPtr, &operandsSize, 8);
+                memcpy(bufferPtr, &mRunTraceLastOperandsSize, 8);
                 bufferPtr += 8;
             }
 #endif //_WIN64
             if(operandsSize != 0)
             {
-                memcpy(bufferPtr, mRunTraceLastBuffer, operandsSize);
-                bufferPtr += operandsSize;
+                memcpy(bufferPtr, mRunTraceLastBuffer, mRunTraceLastOperandsSize);
+                bufferPtr += mRunTraceLastOperandsSize;
             }
             DWORD written = 0;
             if(WriteFile(mRunTraceFile, mRunTraceLastBuffer, bufferPtr - mRunTraceLastBuffer, &written, NULL) == FALSE)
@@ -309,6 +309,7 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
                 memset(mRunTraceFileName, 0, sizeof(mRunTraceFileName));
                 mRunTraceLastIP = 0;
                 mRunTraceLastTID = 0;
+                memset(&mRunTracePreviousContext, 0, sizeof(mRunTracePreviousContext));
                 return;
             }
             // Process current instruction
@@ -333,8 +334,8 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
 #ifdef _WIN64
             else
             {
-                buffer[0] |= 0x30;
-                bufferPtr = buffer + 2;
+                mRunTraceLastBuffer[0] |= 0x30;
+                bufferPtr = mRunTraceLastBuffer + 2;
                 *(unsigned long long*)bufferPtr = relativeIP;
                 bufferPtr += 8;
             }
@@ -358,9 +359,8 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             // save operand count
             mRunTraceLastBuffer[1] |= (regReadCount + regWriteCount) & 0x0F;
             // save operands
-            ComposeRunTraceOperandBuffer(&context, false, operandsBuffer, &operandsSize, &regRead, regReadCount);
-            memcpy(mRunTraceLastWritten, regWrite, sizeof(cs_regs));
-            mRunTraceLastWrittenCount = regWriteCount;
+            ComposeRunTraceOperandBuffer(&context, false, mRunTraceLastOperands, &mRunTraceLastOperandsSize, &regRead, regReadCount);
+            memcpy(&mRunTracePreviousContext, &context, sizeof(context));
         }
         mRunTraceLastIP = address + instruction->Size();
         mRunTraceLastTID = TID;
@@ -374,7 +374,7 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
 @param[out] buffer The output buffer.
 @param[out] BufferSize Output the buffer size written.
 */
-void TraceRecordManager::ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, int* bufferSize, const cs_regs* registers, unsigned char registersCount)
+void TraceRecordManager::ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* context, bool rw, unsigned char* buffer, unsigned int* bufferSize, const cs_regs* registers, unsigned char registersCount)
 {
     int operandsSize = 0;
     for(int i = 0; i < registersCount; i++)
@@ -404,6 +404,7 @@ void TraceRecordManager::ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* co
             break;
         default:
             //TODO
+            break;
         }
         if(rw)
             buffer[operandsSize] |= 8;
@@ -412,6 +413,153 @@ void TraceRecordManager::ComposeRunTraceOperandBuffer(TITAN_ENGINE_CONTEXT_t* co
         operandsSize += registerSize;
     }
     *bufferSize = operandsSize;
+}
+
+void TraceRecordManager::ComposeRunTraceWrittenBuffer(TITAN_ENGINE_CONTEXT_t* context, unsigned char* buffer, unsigned int* bufferSize)
+{
+    cs_regs writtenRegs;
+    unsigned char writtenRegCount = 0;
+    memset(&writtenRegs, 0, sizeof(writtenRegs));
+
+    if(mRunTracePreviousContext.cax != context->cax)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EAX;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.ccx != context->ccx)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_ECX;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.cdx != context->cdx)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EDX;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.cbx != context->cbx)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EBX;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.csp != context->csp)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_ESP;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.cbp != context->cbp)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EBP;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.csi != context->csi)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_ESI;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.cdi != context->cdi)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EDI;
+        writtenRegCount++;
+    }
+#ifdef _WIN64
+    if(mRunTracePreviousContext.r10 != context->r10)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R10;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.r11 != context->r11)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R11;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.r12 != context->r12)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R12;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.r13 != context->r13)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R13;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.r14 != context->r14)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R14;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.r15 != context->r15)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_R15;
+        writtenRegCount++;
+    }
+#endif //_WIN64
+    // No check for RIP
+    if(mRunTracePreviousContext.eflags != context->eflags)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_EFLAGS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.gs != context->gs)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_GS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.fs != context->fs)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_FS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.es != context->es)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_ES;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.ds != context->ds)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.cs != context->cs)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_CS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.ss != context->ss)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_SS;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr0 != context->dr0)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR0;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr1 != context->dr1)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR1;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr2 != context->dr2)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR2;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr3 != context->dr3)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR3;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr6 != context->dr6)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR6;
+        writtenRegCount++;
+    }
+    if(mRunTracePreviousContext.dr7 != context->dr7)
+    {
+        writtenRegs[writtenRegCount] = X86_REG_DR7;
+        writtenRegCount++;
+    }
+    ComposeRunTraceOperandBuffer(context, true, buffer, bufferSize, &writtenRegs, writtenRegCount);
 }
 
 unsigned int TraceRecordManager::getHitCount(duint address)
