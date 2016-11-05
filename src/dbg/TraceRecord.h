@@ -80,6 +80,7 @@ public:
     char mRunTraceFileName[MAX_PATH];
     duint mRunTraceLastTID;
     duint mRunTraceLastIP;
+    int mRunTraceLastInstructionSize;
     TITAN_ENGINE_CONTEXT_t mRunTracePreviousContext;
     unsigned char mRunTraceLastBuffer[672];
     unsigned char mRunTraceLastOperands[672 * 2];

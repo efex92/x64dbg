@@ -9,6 +9,7 @@
 #include "threading.h"
 #include "thread.h"
 #include "plugin_loader.h"
+#include "xrefs.h"
 
 TraceRecordManager TraceRecord;
 
@@ -16,6 +17,9 @@ TraceRecordManager::TraceRecordManager()
 {
     ModuleNames.emplace_back("");
     mRunTraceFile = NULL;
+    mRunTraceLastInstructionSize = 0;
+    mRunTraceLastIP = 0;
+    mRunTraceLastTID = 0;
     memset(mRunTraceFileName, 0, sizeof(mRunTraceFileName));
 }
 
@@ -221,7 +225,17 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
     default:
         break;
     }
-
+    DWORD TID = ThreadGetId(hActiveThread);
+    dsint relativeIP = address - mRunTraceLastIP;
+    if(instruction && relativeIP != 0 && TID == mRunTraceLastTID)
+    {
+        if(instruction->InGroup(CS_GRP_JUMP))
+            XrefAdd(address, mRunTraceLastIP - mRunTraceLastInstructionSize, XREF_JMP);
+        else if(instruction->InGroup(CS_GRP_CALL))
+            XrefAdd(address, mRunTraceLastIP - mRunTraceLastInstructionSize, XREF_CALL);
+        else
+            XrefAdd(address, mRunTraceLastIP - mRunTraceLastInstructionSize, XREF_DATA);
+    }
     if(pageInfo.runTraceInfo.Enabled && mRunTraceFile != NULL && instruction != nullptr)
     {
         /*
@@ -244,14 +258,12 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
         }
         */
         TITAN_ENGINE_CONTEXT_t context;
-        DWORD TID = ThreadGetId(hActiveThread);
         cs_regs regRead, regWrite;
         unsigned char regReadCount = 0, regWriteCount = 0;
         memset(regRead, 0, sizeof(regRead));
         memset(regWrite, 0, sizeof(regWrite));
         if(GetFullContextDataEx(hActiveThread, &context) && instruction->RegsAccess(regRead, &regReadCount, regWrite, &regWriteCount))
         {
-            dsint relativeIP = address - mRunTraceLastIP;
             unsigned char operandsBuffer[620];
             unsigned int operandsSize = 0;
             unsigned char* bufferPtr = mRunTraceLastBuffer;
@@ -362,9 +374,13 @@ void TraceRecordManager::TraceExecute(duint address, size_t size, Capstone* inst
             ComposeRunTraceOperandBuffer(&context, false, mRunTraceLastOperands, &mRunTraceLastOperandsSize, &regRead, regReadCount);
             memcpy(&mRunTracePreviousContext, &context, sizeof(context));
         }
-        mRunTraceLastIP = address + instruction->Size();
-        mRunTraceLastTID = TID;
     }
+    if(instruction)
+    {
+        mRunTraceLastIP = address + instruction->Size();
+        mRunTraceLastInstructionSize = instruction->Size();
+    }
+    mRunTraceLastTID = TID;
 }
 
 /**

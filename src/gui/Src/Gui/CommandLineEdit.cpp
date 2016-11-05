@@ -10,7 +10,7 @@ CommandLineEdit::CommandLineEdit(QWidget* parent)
     mCmdScriptType->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 
     //Initialize QCompleter
-    mCompleter = new QCompleter(QStringList(), this);
+    mCompleter = new QCompleter(this);
     mCompleter->setCaseSensitivity(Qt::CaseInsensitive);
     mCompleter->setCompletionMode(QCompleter::PopupCompletion);
     mCompleterModel = (QStringListModel*)mCompleter->model();

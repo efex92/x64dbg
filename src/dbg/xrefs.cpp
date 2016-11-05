@@ -56,7 +56,7 @@ struct Xrefs : AddrInfoHashMap<LockCrossReferences, XREFSINFO, XrefSerializer>
 
 static Xrefs xrefs;
 
-bool XrefAdd(duint Address, duint From)
+bool XrefAdd(duint Address, duint From, XREFTYPE type)
 {
     XREFSINFO info;
     if(!MemIsValidReadPtr(From) || !xrefs.PrepareValue(info, Address, false))
@@ -72,7 +72,9 @@ bool XrefAdd(duint Address, duint From)
 
     XREF_RECORD xrefRecord;
     xrefRecord.addr = From - moduleBase;
-    if(instInfo.call)
+    if(type != XREF_NONE)
+        xrefRecord.type = type;
+    else if(instInfo.call)
         xrefRecord.type = XREF_CALL;
     else if(instInfo.branch)
         xrefRecord.type = XREF_JMP;

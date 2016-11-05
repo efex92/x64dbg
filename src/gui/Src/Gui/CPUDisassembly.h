@@ -115,6 +115,9 @@ public slots:
     void copyTokenTextSlot();
     void copyTokenValueSlot();
     void followInMemoryMapSlot();
+    void traceRecordToggleRunTraceSlot();
+    void traceRecordToggleCodeBytesSlot();
+    void traceRecordToggleTIDSlot();
 
 protected:
     void paintEvent(QPaintEvent* event);

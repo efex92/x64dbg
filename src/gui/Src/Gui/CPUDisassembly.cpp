@@ -415,6 +415,9 @@ void CPUDisassembly::setupRightClickContextMenu()
     QAction* traceRecordEnableBit = makeAction(DIcon("bit.png"), tr("Bit"), SLOT(ActionTraceRecordBitSlot()));
     QAction* traceRecordEnableByte = makeAction(DIcon("byte.png"), tr("Byte"), SLOT(ActionTraceRecordByteSlot()));
     QAction* traceRecordEnableWord = makeAction(DIcon("word.png"), tr("Word"), SLOT(ActionTraceRecordWordSlot()));
+    QAction* traceRecordToggleRunTrace = makeAction(tr("Enable Run Trace"), SLOT(traceRecordToggleRunTraceSlot()));
+    QAction* traceRecordToggleTID = makeAction(tr("Record Thread ID"), SLOT(traceRecordToggleTIDSlot()));
+    QAction* traceRecordToggleCodeBytes = makeAction(tr("Record Code Bytes"), SLOT(traceRecordToggleCodeBytesSlot()));
     mMenuBuilder->addMenu(makeMenu(DIcon("trace.png"), tr("Trace record")), [ = ](QMenu * menu)
     {
         if(DbgFunctions()->GetTraceRecordType(rvaToVa(getInitialSelection())) == TRACERECORDTYPE::TraceRecordNone)
@@ -425,6 +428,11 @@ void CPUDisassembly::setupRightClickContextMenu()
         }
         else
             menu->addAction(traceRecordDisable);
+        menu->addSeparator();
+        menu->addAction(traceRecordToggleRunTrace);
+        menu->addSeparator();
+        menu->addAction(traceRecordToggleTID);
+        menu->addAction(traceRecordToggleCodeBytes);
         return true;
     });
 
@@ -1876,4 +1884,20 @@ bool CPUDisassembly::getTokenValueText(QString & text)
 void CPUDisassembly::followInMemoryMapSlot()
 {
     DbgCmdExec(QString("memmapdump %1").arg(ToHexString(rvaToVa(getInitialSelection()))).toUtf8().constData());
+}
+
+
+void CPUDisassembly::traceRecordToggleRunTraceSlot()
+{
+
+}
+
+void CPUDisassembly::traceRecordToggleCodeBytesSlot()
+{
+
+}
+
+void CPUDisassembly::traceRecordToggleTIDSlot()
+{
+
 }
