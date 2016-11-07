@@ -421,11 +421,21 @@ bool dbgisignoredexception(unsigned int exception)
     return false;
 }
 
-bool dbgcmdnew(const char* name, CBCOMMAND cbCommand, bool debugonly)
+bool dbgcmdnew(const char* name, CBCOMMAND cbCommand, bool debugonly, const char* desc)
 {
     if(!cmdnew(name, cbCommand, debugonly))
         return false;
-    GuiAutoCompleteAddCmd(name);
+    if(desc != nullptr && desc[0] != 0)
+    {
+        const char* translatedDesc = GuiTranslateText(desc);
+        Memory<char*> buffer(strlen(name) + strlen(translatedDesc) + 2, "dbgcmdnew");
+        strcpy(buffer(), name);
+        strcat(buffer(), "\2");
+        strcat(buffer(), translatedDesc);
+        GuiAutoCompleteAddCmd(buffer());
+    }
+    else
+        GuiAutoCompleteAddCmd(name);
     return true;
 }
 

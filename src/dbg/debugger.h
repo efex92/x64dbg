@@ -94,7 +94,7 @@ void dbgsetfreezestack(bool freeze);
 void dbgclearignoredexceptions();
 void dbgaddignoredexception(ExceptionRange range);
 bool dbgisignoredexception(unsigned int exception);
-bool dbgcmdnew(const char* name, CBCOMMAND cbCommand, bool debugonly);
+bool dbgcmdnew(const char* name, CBCOMMAND cbCommand, bool debugonly, const char* desc);
 bool dbgcmddel(const char* name);
 bool dbglistprocesses(std::vector<PROCESSENTRY32>* infoList, std::vector<std::string>* commandList);
 bool dbgsetcmdline(const char* cmd_line, cmdline_error_t* cmd_line_error);

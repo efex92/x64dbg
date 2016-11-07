@@ -23,10 +23,11 @@ public:
     QWidget* selectorWidget();
 
 public slots:
-    void autoCompleteUpdate(const QString text);
-    void autoCompleteAddCmd(const QString cmd);
-    void autoCompleteDelCmd(const QString cmd);
+    void autoCompleteUpdate(const QString & text);
+    void autoCompleteAddCmd(const QString & cmd);
+    void autoCompleteDelCmd(const QString & cmd);
     void autoCompleteClearAll();
+    void autoCompleteActivatedSlot(const QModelIndex & index);
     void registerScriptType(SCRIPTTYPEINFO* info);
     void unregisterScriptType(int id);
     void scriptTypeChanged(int index);

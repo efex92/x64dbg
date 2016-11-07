@@ -524,7 +524,7 @@ bool plugincmdregister(int pluginHandle, const char* command, CBPLUGINCOMMAND cb
     PLUG_COMMAND plugCmd;
     plugCmd.pluginHandle = pluginHandle;
     strcpy_s(plugCmd.command, command);
-    if(!dbgcmdnew(command, (CBCOMMAND)cbCommand, debugonly))
+    if(!dbgcmdnew(command, (CBCOMMAND)cbCommand, debugonly, ""))
         return false;
     EXCLUSIVE_ACQUIRE(LockPluginCommandList);
     pluginCommandList.push_back(plugCmd);

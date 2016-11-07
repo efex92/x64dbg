@@ -18,8 +18,10 @@ CommandLineEdit::CommandLineEdit(QWidget* parent)
 
     loadSettings("CommandLine");
 
+    fontsUpdated();
     //Setup signals & slots
-    connect(mCompleter, SIGNAL(activated(const QString &)), this, SLOT(clear()), Qt::QueuedConnection);
+    //connect(mCompleter, SIGNAL(activated(const QString &)), this, SLOT(clear()), Qt::QueuedConnection);
+    connect(mCompleter, SIGNAL(activated(const QModelIndex &)), this, SLOT(autoCompleteActivatedSlot(QModelIndex)), Qt::QueuedConnection);
     connect(this, SIGNAL(textEdited(QString)), this, SLOT(autoCompleteUpdate(QString)));
     connect(Bridge::getBridge(), SIGNAL(autoCompleteAddCmd(QString)), this, SLOT(autoCompleteAddCmd(QString)));
     connect(Bridge::getBridge(), SIGNAL(autoCompleteDelCmd(QString)), this, SLOT(autoCompleteDelCmd(QString)));
@@ -29,7 +31,6 @@ CommandLineEdit::CommandLineEdit(QWidget* parent)
     connect(mCmdScriptType, SIGNAL(currentIndexChanged(int)), this, SLOT(scriptTypeChanged(int)));
     connect(Config(), SIGNAL(fontsUpdated()), this, SLOT(fontsUpdated()));
 
-    fontsUpdated();
 }
 
 CommandLineEdit::~CommandLineEdit()
@@ -70,8 +71,17 @@ void CommandLineEdit::keyPressEvent(QKeyEvent* event)
                 }
             }
 
-            popup->setCurrentIndex(currentModelIndex);
+            popup->setCurrentIndex(popup->model()->index(-1, 0));
             popup->hide();
+            if(mCurrentScriptIndex == 0)
+            {
+                QString text = popup->model()->data(currentModelIndex).toString();
+                int indexOfSpace = text.indexOf(QChar(' '));
+                if(indexOfSpace != -1)
+                    this->setText(text.mid(0, indexOfSpace));
+                else
+                    this->setText(text);
+            }
         }
     }
     else if(event->type() == QEvent::KeyPress && event->modifiers() == Qt::ControlModifier)
@@ -96,6 +106,26 @@ void CommandLineEdit::keyPressEvent(QKeyEvent* event)
     }
     else
         HistoryLineEdit::keyPressEvent(event);
+}
+
+void CommandLineEdit::autoCompleteActivatedSlot(const QModelIndex & index)
+{
+    QString cmd = mCompleter->currentCompletion();
+    mCompleter->setCurrentRow(0);
+    if(mCurrentScriptIndex == 0)
+    {
+        int indexOfSpace = cmd.indexOf(QChar(' '));
+        if(indexOfSpace != -1)
+            this->setText(cmd.mid(0, indexOfSpace));
+        else
+        {
+            this->setText(cmd);
+        }
+    }
+    else
+    {
+        this->setText(cmd);
+    }
 }
 
 // Disables moving to Prev/Next child when pressing tab
@@ -129,7 +159,7 @@ QWidget* CommandLineEdit::selectorWidget()
     return mCmdScriptType;
 }
 
-void CommandLineEdit::autoCompleteUpdate(const QString text)
+void CommandLineEdit::autoCompleteUpdate(const QString & text)
 {
     if(mCurrentScriptIndex == -1)
         return;
@@ -186,13 +216,26 @@ void CommandLineEdit::autoCompleteUpdate(const QString text)
     }
 }
 
-void CommandLineEdit::autoCompleteAddCmd(const QString cmd)
+void CommandLineEdit::autoCompleteAddCmd(const QString & cmd)
 {
-    mDefaultCompletions << cmd.split(QChar('\1'), QString::SkipEmptyParts);
+    QStringList commands;
+    auto helpCharIndex = cmd.indexOf(QChar('\2'));
+    if(helpCharIndex != -1)
+    {
+        commands = cmd.mid(0, helpCharIndex).split(QChar('\1'), QString::SkipEmptyParts);
+        QString helpString = cmd.mid(helpCharIndex + 1);
+        for(auto & i : commands)
+            i += " : " + helpString;
+    }
+    else
+    {
+        commands = cmd.split(QChar('\1'), QString::SkipEmptyParts);
+    }
+    mDefaultCompletions << commands;
     mDefaultCompletions.removeDuplicates();
 }
 
-void CommandLineEdit::autoCompleteDelCmd(const QString cmd)
+void CommandLineEdit::autoCompleteDelCmd(const QString & cmd)
 {
     QStringList deleteList = cmd.split(QChar('\1'), QString::SkipEmptyParts);
 
