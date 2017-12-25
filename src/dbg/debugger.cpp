@@ -1451,9 +1451,6 @@ static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
 static void cbExitProcess(EXIT_PROCESS_DEBUG_INFO* ExitProcess)
 {
     dprintf(QT_TRANSLATE_NOOP("DBG", "Process stopped with exit code 0x%X\n"), ExitProcess->dwExitCode);
-    PLUG_CB_EXITPROCESS callbackInfo;
-    callbackInfo.ExitProcess = ExitProcess;
-    plugincbcall(CB_EXITPROCESS, &callbackInfo);
     _dbg_animatestop(); // Stop animating
 
     //history
@@ -1465,6 +1462,9 @@ static void cbExitProcess(EXIT_PROCESS_DEBUG_INFO* ExitProcess)
     dbgsetforeground();
     wait(WAITID_RUN);
 
+    PLUG_CB_EXITPROCESS callbackInfo;
+    callbackInfo.ExitProcess = ExitProcess;
+    plugincbcall(CB_EXITPROCESS, &callbackInfo);
     //unload main module
     SafeSymUnloadModule64(fdProcessInfo->hProcess, pCreateProcessBase);
     //cleanup dbghelp
