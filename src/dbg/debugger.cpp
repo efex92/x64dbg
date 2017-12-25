@@ -1455,14 +1455,20 @@ static void cbExitProcess(EXIT_PROCESS_DEBUG_INFO* ExitProcess)
     callbackInfo.ExitProcess = ExitProcess;
     plugincbcall(CB_EXITPROCESS, &callbackInfo);
     _dbg_animatestop(); // Stop animating
+
+    //history
+    HistoryClear();
+    //update GUI
+    DebugUpdateGuiSetStateAsync(GetContextDataEx(hActiveThread, UE_CIP), true);
+    //lock
+    lock(WAITID_RUN);
+    dbgsetforeground();
+    wait(WAITID_RUN);
+
     //unload main module
     SafeSymUnloadModule64(fdProcessInfo->hProcess, pCreateProcessBase);
     //cleanup dbghelp
     SafeSymCleanup(fdProcessInfo->hProcess);
-    //history
-    dbgcleartracestate();
-    dbgClearRtuBreakpoints();
-    HistoryClear();
 }
 
 static void cbCreateThread(CREATE_THREAD_DEBUG_INFO* CreateThread)
