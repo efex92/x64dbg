@@ -1459,6 +1459,9 @@ static void cbExitProcess(EXIT_PROCESS_DEBUG_INFO* ExitProcess)
     DebugUpdateGuiSetStateAsync(GetContextDataEx(hActiveThread, UE_CIP), true);
     //lock
     lock(WAITID_RUN);
+    // Plugin callback
+    PLUG_CB_PAUSEDEBUG pauseInfo = { nullptr };
+    plugincbcall(CB_PAUSEDEBUG, &pauseInfo);
     dbgsetforeground();
     wait(WAITID_RUN);
 
