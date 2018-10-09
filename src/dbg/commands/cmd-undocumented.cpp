@@ -240,6 +240,10 @@ bool cbInstrZydis(int argc, char* argv[])
     auto instr = cp.GetInstr();
     int argcount = instr->operandCount;
     dputs_untranslated(cp.InstructionText(true).c_str());
+    dprintf_untranslated("prefix size: %d\n", instr->raw.prefixes.count);
+    dprintf_untranslated("disp.offset: %d, disp.size: %d\n", instr->raw.disp.offset, instr->raw.disp.size);
+    dprintf_untranslated("imm[0].offset: %d, imm[0].size: %d\n", instr->raw.imm[0].offset, instr->raw.imm[0].size);
+    dprintf_untranslated("imm[1].offset: %d, imm[1].size: %d\n", instr->raw.imm[1].offset, instr->raw.imm[1].size);
     dprintf_untranslated("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), instr->operandCount);
     auto rwstr = [](uint8_t access)
     {
@@ -291,6 +295,9 @@ bool cbInstrZydis(int argc, char* argv[])
                                  mem.disp.value);
         }
         break;
+        case ZYDIS_OPERAND_TYPE_POINTER:
+            dprintf_untranslated("pointer: %X:%p\n", op.ptr.segment, op.ptr.offset);
+            break;
         }
     }
 
@@ -445,7 +452,7 @@ bool cbInstrBriefcheck(int argc, char* argv[])
             continue;
         }
         i += cp.Size();
-        auto mnem = StringUtils::ToLower(cp.MnemonicId());
+        auto mnem = StringUtils::ToLower(cp.Mnemonic());
         auto brief = MnemonicHelp::getBriefDescription(mnem.c_str());
         if(brief.length() || reported.count(mnem))
             continue;

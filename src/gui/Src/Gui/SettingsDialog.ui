@@ -33,7 +33,7 @@
       <bool>true</bool>
      </property>
      <property name="currentIndex">
-      <number>4</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="tabEvents">
       <attribute name="title">
@@ -703,6 +703,13 @@
         <widget class="QCheckBox" name="chkDisableAutoComplete">
          <property name="text">
           <string>Disable auto completion in goto dialog</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkAsciiAddressDumpMode">
+         <property name="text">
+          <string>Show ASCII/Unicode in address dump mode</string>
          </property>
         </widget>
        </item>

@@ -1,6 +1,5 @@
 #include "main.h"
 #include "zydis_wrapper.h"
-#include "capstone_wrapper.h"
 #include "MainWindow.h"
 #include "Configuration.h"
 #include <QTextCodec>
@@ -8,6 +7,7 @@
 #include <QTranslator>
 #include <QTextStream>
 #include <QLibraryInfo>
+#include "MiscUtil.h"
 
 MyApplication::MyApplication(int & argc, char** argv)
     : QApplication(argc, argv)
@@ -109,7 +109,6 @@ int main(int argc, char* argv[])
 
     // initialize capstone
     Zydis::GlobalInitialize();
-    Capstone::GlobalInitialize();
 
     // load config file + set config font
     mConfiguration = new Configuration;

@@ -4,6 +4,7 @@
 #include "Configuration.h"
 #include "Bridge.h"
 #include "ExceptionRangeDialog.h"
+#include "MiscUtil.h"
 
 SettingsDialog::SettingsDialog(QWidget* parent) :
     QDialog(parent),
@@ -16,6 +17,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) :
     adjustSize();
     bTokenizerConfigUpdated = false;
     bDisableAutoCompleteUpdated = false;
+    bAsciiAddressDumpModeUpdated = false;
     LoadSettings(); //load settings from file
     connect(Bridge::getBridge(), SIGNAL(setLastException(uint)), this, SLOT(setLastException(uint)));
     lastException = 0;
@@ -47,6 +49,9 @@ Qt::CheckState SettingsDialog::bool2check(bool checked)
 
 void SettingsDialog::LoadSettings()
 {
+    //Flush pending config changes
+    Config()->save();
+
     //Defaults
     memset(&settings, 0, sizeof(SettingsStruct));
     settings.eventSystemBreakpoint = true;
@@ -56,7 +61,7 @@ void SettingsDialog::LoadSettings()
     settings.engineCalcType = calc_unsigned;
     settings.engineBreakpointType = break_int3short;
     settings.engineUndecorateSymbolNames = true;
-    settings.engineEnableSourceDebugging = true;
+    settings.engineEnableSourceDebugging = false;
     settings.engineEnableTraceRecordDuringTrace = true;
     settings.engineNoScriptTimeout = false;
     settings.engineIgnoreInconsistentBreakpoints = false;
@@ -78,6 +83,7 @@ void SettingsDialog::LoadSettings()
     settings.disasmMaxModuleSize = -1;
     settings.guiNoForegroundWindow = true;
     settings.guiDisableAutoComplete = false;
+    settings.guiAsciiAddressDumpMode = false;
 
     //Events tab
     GetSettingBool("Events", "SystemBreakpoint", &settings.eventSystemBreakpoint);
@@ -234,6 +240,7 @@ void SettingsDialog::LoadSettings()
     GetSettingBool("Gui", "ShowGraphRva", &settings.guiShowGraphRva);
     GetSettingBool("Gui", "ShowExitConfirmation", &settings.guiShowExitConfirmation);
     GetSettingBool("Gui", "DisableAutoComplete", &settings.guiDisableAutoComplete);
+    GetSettingBool("Gui", "AsciiAddressDumpMode", &settings.guiAsciiAddressDumpMode);
     ui->chkFpuRegistersLittleEndian->setChecked(settings.guiFpuRegistersLittleEndian);
     ui->chkSaveColumnOrder->setChecked(settings.guiSaveColumnOrder);
     ui->chkNoCloseDialog->setChecked(settings.guiNoCloseDialog);
@@ -244,6 +251,7 @@ void SettingsDialog::LoadSettings()
     ui->chkShowGraphRva->setChecked(settings.guiShowGraphRva);
     ui->chkShowExitConfirmation->setChecked(settings.guiShowExitConfirmation);
     ui->chkDisableAutoComplete->setChecked(settings.guiDisableAutoComplete);
+    ui->chkAsciiAddressDumpMode->setChecked(settings.guiAsciiAddressDumpMode);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -383,6 +391,7 @@ void SettingsDialog::SaveSettings()
     BridgeSettingSetUint("Gui", "ShowGraphRva", settings.guiShowGraphRva);
     BridgeSettingSetUint("Gui", "ShowExitConfirmation", settings.guiShowExitConfirmation);
     BridgeSettingSetUint("Gui", "DisableAutoComplete", settings.guiDisableAutoComplete);
+    BridgeSettingSetUint("Gui", "AsciiAddressDumpMode", settings.guiAsciiAddressDumpMode);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -417,13 +426,18 @@ void SettingsDialog::SaveSettings()
     Config()->load();
     if(bTokenizerConfigUpdated)
     {
-        Config()->emitTokenizerConfigUpdated();
+        emit Config()->tokenizerConfigUpdated();
         bTokenizerConfigUpdated = false;
     }
     if(bDisableAutoCompleteUpdated)
     {
-        Config()->emitDisableAutoCompleteUpdated();
+        emit Config()->disableAutoCompleteUpdated();
         bDisableAutoCompleteUpdated = false;
+    }
+    if(bAsciiAddressDumpModeUpdated)
+    {
+        emit Config()->asciiAddressDumpModeUpdated();
+        bAsciiAddressDumpModeUpdated = false;
     }
     DbgSettingsUpdated();
     GuiUpdateAllViews();
@@ -865,6 +879,12 @@ void SettingsDialog::on_chkDisableAutoComplete_toggled(bool checked)
 {
     settings.guiDisableAutoComplete = checked;
     bDisableAutoCompleteUpdated = true;
+}
+
+void SettingsDialog::on_chkAsciiAddressDumpMode_toggled(bool checked)
+{
+    settings.guiAsciiAddressDumpMode = checked;
+    bAsciiAddressDumpModeUpdated = true;
 }
 
 void SettingsDialog::on_chkUseLocalHelpFile_toggled(bool checked)

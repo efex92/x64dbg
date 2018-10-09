@@ -3,6 +3,7 @@
 #include "Bridge.h"
 #include <QMessageBox>
 #include "BrowseDialog.h"
+#include "MiscUtil.h"
 
 SimpleTraceDialog::SimpleTraceDialog(QWidget* parent) :
     QDialog(parent),
@@ -19,7 +20,7 @@ SimpleTraceDialog::SimpleTraceDialog(QWidget* parent) :
     ui->editLogCondition->setPlaceholderText(tr("Example: eax == 0 && ebx == 0"));
     ui->editCommandText->setPlaceholderText(tr("Example: eax=4;StepOut"));
     ui->editCommandCondition->setPlaceholderText(tr("Example: eax == 0 && ebx == 0"));
-    ui->editSwitchCondition->setPlaceholderText(tr("Example: eax == 0 && ebx == 0"));
+    ui->editSwitchCondition->setPlaceholderText(tr("Example: mod.party(dis.branchdest(cip)) == 1"));
 }
 
 SimpleTraceDialog::~SimpleTraceDialog()

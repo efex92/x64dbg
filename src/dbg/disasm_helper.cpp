@@ -182,6 +182,11 @@ static void HandleCapstoneOperand(Zydis & cp, int opindex, DISASM_ARG* arg, bool
     }
     break;
 
+    case ZYDIS_OPERAND_TYPE_POINTER:
+        arg->type = arg_normal;
+        arg->value = op.ptr.offset;
+        break;
+
     default:
         break;
     }
@@ -202,7 +207,7 @@ void disasmget(Zydis & cp, unsigned char* buffer, duint addr, DISASM_INSTR* inst
         return;
     }
     auto cpInstr = cp.GetInstr();
-    strcpy_s(instr->instruction, cp.InstructionText().c_str());
+    strncpy_s(instr->instruction, cp.InstructionText().c_str(), _TRUNCATE);
     instr->instr_size = cpInstr->length;
     if(cp.IsBranchType(Zydis::BTJmp | Zydis::BTLoop | Zydis::BTRet | Zydis::BTCall))
         instr->type = instr_branch;
@@ -294,7 +299,8 @@ bool disasmispossiblestring(duint addr, STRING_TYPE* type)
 {
     unsigned char data[11];
     memset(data, 0, sizeof(data));
-    if(!MemReadUnsafe(addr, data, sizeof(data) - 3))
+    duint bytesRead = 0;
+    if(!MemReadUnsafe(addr, data, sizeof(data) - 3, &bytesRead) && bytesRead < 2)
         return false;
     duint test = 0;
     memcpy(&test, data, sizeof(duint));
@@ -322,8 +328,7 @@ bool disasmgetstringat(duint addr, STRING_TYPE* type, char* ascii, char* unicode
     if(!MemIsValidReadPtrUnsafe(addr, true) || !disasmispossiblestring(addr))
         return false;
     Memory<unsigned char*> data((maxlen + 1) * 2, "disasmgetstringat:data");
-    if(!MemReadUnsafe(addr, data(), (maxlen + 1) * 2)) //TODO: use safe version?
-        return false;
+    MemReadUnsafe(addr, data(), (maxlen + 1) * 2); //TODO: use safe version?
 
     // Save a few pointer casts
     auto asciiData = (char*)data();

@@ -80,6 +80,8 @@ public slots:
     void floatLongDoubleSlot();
 
     void addressSlot();
+    void addressUnicodeSlot();
+    void addressAsciiSlot();
     void disassemblySlot();
 
     void selectionGet(SELECTIONDATA* selection);
@@ -104,13 +106,14 @@ public slots:
 
     void selectionUpdatedSlot();
     void yaraSlot();
-    void dataCopySlot();
     void entropySlot();
     void syncWithExpressionSlot();
     void followInDumpNSlot();
     void allocMemorySlot();
 
     void followInMemoryMapSlot();
+    void headerButtonReleasedSlot(int colIndex);
+    void asciiAddressDumpModeUpdatedSlot();
 
 private:
     MenuBuilder* mMenuBuilder;
@@ -124,6 +127,7 @@ private:
     CPUDisassembly* mDisas;
     CPUMultiDump* mMultiDump;
     int mAsciiSeparator = 0;
+    bool mAsciiAddressDumpMode;
 
     enum ViewEnum_t
     {
@@ -145,7 +149,11 @@ private:
         ViewFloatLongDouble,
         ViewAddress,
         ViewIntegerSignedByte,
-        ViewIntegerUnsignedByte
+        ViewIntegerUnsignedByte,
+        ViewAddressAscii,
+        ViewAddressUnicode,
+        ViewHexCodepage,
+        ViewTextCodepage
     };
 
     void setView(ViewEnum_t view);

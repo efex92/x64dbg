@@ -1792,10 +1792,13 @@ void RegistersView::paintEvent(QPaintEvent* event)
 
 void RegistersView::keyPressEvent(QKeyEvent* event)
 {
-    if(!DbgIsDebugging())
-        return;
-    if(event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return)
-        wCM_Modify->trigger();
+    if(DbgIsDebugging())
+    {
+        int key = event->key();
+        if(key == Qt::Key_Enter || key == Qt::Key_Return)
+            wCM_Modify->trigger();
+    }
+    QScrollArea::keyPressEvent(event);
 }
 
 QSize RegistersView::sizeHint() const
@@ -2638,7 +2641,9 @@ void RegistersView::displayEditDialog()
                         fpuvalue = mLineEdit.editText.toUInt(&ok, 16);
                     else if(mFPUx87_80BITSDISPLAY.contains(mSelected))
                     {
-                        if(sizeRegister == 10 && mLineEdit.editText.contains(QChar('.')))
+                        QString editTextLower = mLineEdit.editText.toLower();
+                        if(sizeRegister == 10 && (mLineEdit.editText.contains(QChar('.')) || editTextLower == "nan" || editTextLower == "inf"
+                                                  || editTextLower == "+inf" || editTextLower == "-inf"))
                         {
                             char number[10];
                             str2ld(mLineEdit.editText.toUtf8().constData(), number);
@@ -3284,7 +3289,6 @@ void RegistersView::setRegister(REGISTER_NAME reg, duint value)
         // flags need to '_' infront
         if(mFlags.contains(reg))
             wRegName = "_" + wRegName;
-
 
         // we change the value (so highlight it)
         mRegisterUpdates.insert(reg);

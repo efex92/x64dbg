@@ -67,7 +67,6 @@ INCLUDEPATH += \
     Src/Utils \
     Src/ThirdPartyLibs/snowman \
     Src/ThirdPartyLibs/ldconvert \
-    ../capstone_wrapper \
     ../zydis_wrapper \
     ../zydis_wrapper/zydis/include
 
@@ -84,9 +83,7 @@ SOURCES += \
     Src/BasicView/HexDump.cpp \
     Src/BasicView/AbstractTableView.cpp \
     Src/Disassembler/QBeaEngine.cpp \
-    Src/Disassembler/CsQBeaEngine.cpp \
     Src/Disassembler/capstone_gui.cpp \
-    Src/Disassembler/cs_capstone_gui.cpp \
     Src/Memory/MemoryPage.cpp \
     Src/Bridge/Bridge.cpp \
     Src/BasicView/StdTable.cpp \
@@ -112,7 +109,6 @@ SOURCES += \
     Src/Utils/RichTextPainter.cpp \
     Src/Gui/TabBar.cpp \
     Src/Gui/TabWidget.cpp \
-    Src/Gui/CommandHelpView.cpp \
     Src/BasicView/HistoryLineEdit.cpp \
     Src/Utils/Configuration.cpp \
     Src/Gui/CPUSideBar.cpp \
@@ -127,7 +123,6 @@ SOURCES += \
     Src/Gui/PatchDialog.cpp \
     Src/Gui/PatchDialogGroupSelector.cpp \
     Src/Utils/UpdateChecker.cpp \
-    Src/BasicView/SearchListViewTable.cpp \
     Src/Gui/CallStackView.cpp \
     Src/Gui/ShortcutsDialog.cpp \
     Src/BasicView/ShortcutEdit.cpp \
@@ -138,7 +133,6 @@ SOURCES += \
     Src/Gui/ReferenceManager.cpp \
     Src/Bridge/BridgeResult.cpp \
     Src/Gui/YaraRuleSelectionDialog.cpp \
-    Src/Gui/DataCopyDialog.cpp \
     Src/Gui/SourceViewerManager.cpp \
     Src/Gui/SourceView.cpp \
     Src/Utils/ValidateExpressionThread.cpp \
@@ -189,7 +183,10 @@ SOURCES += \
     Src/Tracer/TraceBrowser.cpp \
     Src/Tracer/TraceFileReader.cpp \
     Src/Tracer/TraceFileSearch.cpp \
-    Src/Gui/MultiItemsSelectWindow.cpp
+    Src/Gui/MultiItemsSelectWindow.cpp \
+    Src/BasicView/AbstractStdTable.cpp \
+    Src/Gui/ZehSymbolTable.cpp \
+    Src/BasicView/StdSearchListView.cpp
 
 
 HEADERS += \
@@ -201,9 +198,7 @@ HEADERS += \
     Src/BasicView/HexDump.h \
     Src/BasicView/AbstractTableView.h \
     Src/Disassembler/QBeaEngine.h \
-    Src/Disassembler/CsQBeaEngine.h \
     Src/Disassembler/capstone_gui.h \
-    Src/Disassembler/cs_capstone_gui.h \
     Src/Memory/MemoryPage.h \
     Src/Bridge/Bridge.h \
     Src/Exports.h \
@@ -231,7 +226,6 @@ HEADERS += \
     Src/Utils/RichTextPainter.h \
     Src/Gui/TabBar.h \
     Src/Gui/TabWidget.h \
-    Src/Gui/CommandHelpView.h \
     Src/BasicView/HistoryLineEdit.h \
     Src/Utils/Configuration.h \
     Src/Gui/CPUSideBar.h \
@@ -246,7 +240,6 @@ HEADERS += \
     Src/Gui/PatchDialog.h \
     Src/Gui/PatchDialogGroupSelector.h \
     Src/Utils/UpdateChecker.h \
-    Src/BasicView/SearchListViewTable.h \
     Src/Gui/CallStackView.h \
     Src/Gui/ShortcutsDialog.h \
     Src/BasicView/ShortcutEdit.h \
@@ -257,7 +250,6 @@ HEADERS += \
     Src/Gui/ReferenceManager.h \
     Src/Bridge/BridgeResult.h \
     Src/Gui/YaraRuleSelectionDialog.h \
-    Src/Gui/DataCopyDialog.h \
     Src/Gui/SourceViewerManager.h \
     Src/Gui/SourceView.h \
     Src/Utils/StringUtil.h \
@@ -313,7 +305,11 @@ HEADERS += \
     Src/Tracer/TraceFileReader.h \
     Src/Tracer/TraceFileReaderInternal.h \
     Src/Tracer/TraceFileSearch.h \
-    Src/Gui/MultiItemsSelectWindow.h
+    Src/Gui/MultiItemsSelectWindow.h \
+    Src/BasicView/AbstractStdTable.h \
+    Src/Gui/ZehSymbolTable.h \
+    Src/BasicView/AbstractSearchList.h \
+    Src/BasicView/StdSearchListView.h
     
 
 FORMS += \
@@ -325,7 +321,6 @@ FORMS += \
     Src/Gui/SymbolView.ui \
     Src/Gui/SettingsDialog.ui \
     Src/Gui/ExceptionRangeDialog.ui \
-    Src/Gui/CommandHelpView.ui \
     Src/Gui/AppearanceDialog.ui \
     Src/Gui/CloseDialog.ui \
     Src/Gui/HexEditDialog.ui \
@@ -338,7 +333,6 @@ FORMS += \
     Src/Gui/PageMemoryRights.ui \
     Src/Gui/SelectFields.ui \
     Src/Gui/YaraRuleSelectionDialog.ui \
-    Src/Gui/DataCopyDialog.ui \
     Src/Gui/EntropyDialog.ui \
     Src/Gui/AssembleDialog.ui \
     Src/Gui/EditBreakpointDialog.ui \
@@ -365,16 +359,12 @@ LIBS += -luser32 -ladvapi32 -lwinmm -lshell32
 !contains(QMAKE_HOST.arch, x86_64) {
     # Windows x86 (32bit) specific build
     LIBS += -L"$$PWD/../zydis_wrapper/bin/x32$${DIR_SUFFIX}" -lzydis_wrapper
-    LIBS += -L"$$PWD/../capstone_wrapper/capstone" -lcapstone_x86
-    LIBS += -L"$$PWD/../capstone_wrapper/bin/x32$${DIR_SUFFIX}" -lcapstone_wrapper
     LIBS += -L"$$PWD/Src/ThirdPartyLibs/snowman" -lsnowman_x86
     LIBS += -L"$$PWD/Src/ThirdPartyLibs/ldconvert" -lldconvert_x86
     LIBS += -L"$${X64_BIN_DIR}" -lx32bridge
 } else {
     # Windows x64 (64bit) specific build
     LIBS += -L"$$PWD/../zydis_wrapper/bin/x64$${DIR_SUFFIX}" -lzydis_wrapper
-    LIBS += -L"$$PWD/../capstone_wrapper/capstone" -lcapstone_x64
-    LIBS += -L"$$PWD/../capstone_wrapper/bin/x64$${DIR_SUFFIX}" -lcapstone_wrapper
     LIBS += -L"$$PWD/Src/ThirdPartyLibs/snowman" -lsnowman_x64
     LIBS += -L"$$PWD/Src/ThirdPartyLibs/ldconvert" -lldconvert_x64
     LIBS += -L"$${X64_BIN_DIR}" -lx64bridge

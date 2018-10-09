@@ -15,6 +15,8 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include "BreakpointMenu.h"
+#include "StringUtil.h"
+#include "MiscUtil.h"
 
 DisassemblerGraphView::DisassemblerGraphView(QWidget* parent)
     : QAbstractScrollArea(parent),
@@ -1059,6 +1061,11 @@ void DisassemblerGraphView::renderFunction(Function & func)
 
     //Create render nodes
     this->blocks.clear();
+    if(func.entry == 0)
+    {
+        this->ready = false;
+        return;
+    }
     for(Block & block : func.blocks)
     {
         this->blocks[block.entry] = DisassemblerBlock(block);

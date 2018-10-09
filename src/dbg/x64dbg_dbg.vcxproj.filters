@@ -81,9 +81,6 @@
     <Filter Include="Header Files\Interfaces/Exports\_scriptapi">
       <UniqueIdentifier>{eb7d9981-6079-4b4b-af18-e44e63451d10}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Third Party\keystone">
-      <UniqueIdentifier>{ccc8108c-36f5-4b8d-8152-7208f109d752}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\Commands">
       <UniqueIdentifier>{c753866f-f2d5-4469-b8b0-0c7a6cea607e}</UniqueIdentifier>
     </Filter>
@@ -95,6 +92,27 @@
     </Filter>
     <Filter Include="Header Files\btparser">
       <UniqueIdentifier>{d20554d2-b3de-4e73-ac55-217da06783ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Third Party\msdia">
+      <UniqueIdentifier>{638ee3a0-ab1a-4bb2-bb14-59461ddf86b2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Symbols">
+      <UniqueIdentifier>{087f2c70-08a6-4b80-988e-81be42c80580}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Symbols">
+      <UniqueIdentifier>{1f9e6c1d-74b2-4f72-bbe2-5fa68094d5fd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Third Party">
+      <UniqueIdentifier>{73b6410d-7eef-4131-a04f-56abc14d84f5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Third Party\WinInet-Downloader">
+      <UniqueIdentifier>{e47a911a-a6f6-415d-9eec-4f79f478d0a0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Third Party\WinInet-Downloader">
+      <UniqueIdentifier>{cdf955c6-b066-4b06-87f0-7a02b9bbfc55}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Third Party\msdia">
+      <UniqueIdentifier>{dc4f0ea0-8d28-4d9e-a8ac-901dd274787d}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -153,9 +171,6 @@
       <Filter>Source Files\Utilities</Filter>
     </ClCompile>
     <ClCompile Include="stackinfo.cpp">
-      <Filter>Source Files\Information</Filter>
-    </ClCompile>
-    <ClCompile Include="symbolinfo.cpp">
       <Filter>Source Files\Information</Filter>
     </ClCompile>
     <ClCompile Include="debugger.cpp">
@@ -353,9 +368,6 @@
     <ClCompile Include="animate.cpp">
       <Filter>Source Files\Utilities</Filter>
     </ClCompile>
-    <ClCompile Include="symcache.cpp">
-      <Filter>Source Files\Information</Filter>
-    </ClCompile>
     <ClCompile Include="commands\cmd-analysis.cpp">
       <Filter>Source Files\Commands</Filter>
     </ClCompile>
@@ -431,6 +443,24 @@
     <ClCompile Include="formatfunctions.cpp">
       <Filter>Source Files\Core</Filter>
     </ClCompile>
+    <ClCompile Include="symcache.cpp">
+      <Filter>Source Files\Symbols</Filter>
+    </ClCompile>
+    <ClCompile Include="symbolinfo.cpp">
+      <Filter>Source Files\Symbols</Filter>
+    </ClCompile>
+    <ClCompile Include="pdbdiafile.cpp">
+      <Filter>Source Files\Symbols</Filter>
+    </ClCompile>
+    <ClCompile Include="symbolsourcedia.cpp">
+      <Filter>Source Files\Symbols</Filter>
+    </ClCompile>
+    <ClCompile Include="msdia\diacreate.cpp">
+      <Filter>Source Files\Third Party\msdia</Filter>
+    </ClCompile>
+    <ClCompile Include="WinInet-Downloader\downslib.cpp">
+      <Filter>Source Files\Third Party\WinInet-Downloader</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="dbghelp\dbghelp.h">
@@ -494,9 +524,6 @@
       <Filter>Header Files\Information</Filter>
     </ClInclude>
     <ClInclude Include="stackinfo.h">
-      <Filter>Header Files\Information</Filter>
-    </ClInclude>
-    <ClInclude Include="symbolinfo.h">
       <Filter>Header Files\Information</Filter>
     </ClInclude>
     <ClInclude Include="_plugins.h">
@@ -772,33 +799,6 @@
     <ClInclude Include="encodemap.h">
       <Filter>Header Files\Information</Filter>
     </ClInclude>
-    <ClInclude Include="keystone\arm.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\arm64.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\hexagon.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\keystone.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\mips.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\ppc.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\sparc.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\systemz.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
-    <ClInclude Include="keystone\x86.h">
-      <Filter>Header Files\Third Party\keystone</Filter>
-    </ClInclude>
     <ClInclude Include="datainst_helper.h">
       <Filter>Header Files\Utilities</Filter>
     </ClInclude>
@@ -864,9 +864,6 @@
     </ClInclude>
     <ClInclude Include="animate.h">
       <Filter>Header Files\Utilities</Filter>
-    </ClInclude>
-    <ClInclude Include="symcache.h">
-      <Filter>Header Files\Information</Filter>
     </ClInclude>
     <ClInclude Include="commands\cmd-breakpoint-control.h">
       <Filter>Header Files\Commands</Filter>
@@ -966,6 +963,42 @@
     </ClInclude>
     <ClInclude Include="debugger_tracing.h">
       <Filter>Header Files\Debugger Core</Filter>
+    </ClInclude>
+    <ClInclude Include="msdia\cvConst.h">
+      <Filter>Header Files\Third Party\msdia</Filter>
+    </ClInclude>
+    <ClInclude Include="msdia\dia2.h">
+      <Filter>Header Files\Third Party\msdia</Filter>
+    </ClInclude>
+    <ClInclude Include="msdia\diaCreate.h">
+      <Filter>Header Files\Third Party\msdia</Filter>
+    </ClInclude>
+    <ClInclude Include="symbolsourcebase.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="symcache.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="symbolinfo.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="pdbdiatypes.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="pdbdiafile.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="sortedlru.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="symbolsourcedia.h">
+      <Filter>Header Files\Symbols</Filter>
+    </ClInclude>
+    <ClInclude Include="WinInet-Downloader\downslib.h">
+      <Filter>Header Files\Third Party\WinInet-Downloader</Filter>
+    </ClInclude>
+    <ClInclude Include="symbolundecorator.h">
+      <Filter>Header Files\Symbols</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

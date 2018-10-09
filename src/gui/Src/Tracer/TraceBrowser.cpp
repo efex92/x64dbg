@@ -132,7 +132,7 @@ QString TraceBrowser::paintContent(QPainter* painter, dsint rowBase, int rowOffs
     bool wIsSelected = (index >= mSelection.fromIndex && index <= mSelection.toIndex);
     if(wIsSelected)
     {
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor));
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor));
     }
     if(index >= mTraceFile->Length())
         return "";
@@ -446,6 +446,10 @@ void TraceBrowser::setupRightClickContextMenu()
     {
         return mTraceFile != nullptr;
     });
+    mMenuBuilder->addAction(makeAction(DIcon("fatal-error.png"), tr("Close and delete"), SLOT(closeDeleteSlot())), [this](QMenu*)
+    {
+        return mTraceFile != nullptr;
+    });
     mMenuBuilder->addSeparator();
     auto isValid = [this](QMenu*)
     {
@@ -494,8 +498,8 @@ void TraceBrowser::setupRightClickContextMenu()
     mMenuBuilder->addMenu(makeMenu(DIcon("goto.png"), tr("Go to")), gotoMenu);
 
     MenuBuilder* searchMenu = new MenuBuilder(this, isValid);
-    searchMenu->addAction(makeAction(tr("Constant"), SLOT(searchConstantSlot())));
-    searchMenu->addAction(makeAction(tr("Memory Reference"), SLOT(searchMemRefSlot())));
+    searchMenu->addAction(makeAction(DIcon("search_for_constant.png"), tr("Constant"), SLOT(searchConstantSlot())));
+    searchMenu->addAction(makeAction(DIcon("memory-map.png"), tr("Memory Reference"), SLOT(searchMemRefSlot())));
     mMenuBuilder->addMenu(makeMenu(DIcon("search.png"), tr("&Search")), searchMenu);
 
     // The following code adds a menu to view the information about currently selected instruction. When info box is completed, remove me.
@@ -836,7 +840,7 @@ void TraceBrowser::updateColors()
     AbstractTableView::updateColors();
     //CapstoneTokenizer::UpdateColors(); //Already called in disassembly
     mDisasm->UpdateConfig();
-    backgroundColor = ConfigColor("DisassemblyBackgroundColor");
+    mBackgroundColor = ConfigColor("DisassemblyBackgroundColor");
 
     mInstructionHighlightColor = ConfigColor("InstructionHighlightColor");
     mSelectionColor = ConfigColor("DisassemblySelectionColor");
@@ -915,10 +919,26 @@ void TraceBrowser::toggleRunTraceSlot()
 
 void TraceBrowser::closeFileSlot()
 {
+    if(DbgValFromString("tr.runtraceenabled()") == 1)
+        DbgCmdExec("StopRunTrace");
     mTraceFile->Close();
     delete mTraceFile;
     mTraceFile = nullptr;
     reloadData();
+}
+
+void TraceBrowser::closeDeleteSlot()
+{
+    QMessageBox msgbox(QMessageBox::Critical, tr("Close and delete"), tr("Are you really going to delete this file?"), QMessageBox::Yes | QMessageBox::Cancel, this);
+    if(msgbox.exec() == QMessageBox::Yes)
+    {
+        if(DbgValFromString("tr.runtraceenabled()") == 1)
+            DbgCmdExecDirect("StopRunTrace");
+        mTraceFile->Delete();
+        delete mTraceFile;
+        mTraceFile = nullptr;
+        reloadData();
+    }
 }
 
 void TraceBrowser::parseFinishedSlot()

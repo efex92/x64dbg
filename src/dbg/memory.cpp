@@ -36,6 +36,9 @@ void MemUpdateMap()
 
         do
         {
+            if(!DbgIsDebugging())
+                return;
+
             // Query memory attributes
             MEMORY_BASIC_INFORMATION mbi;
             memset(&mbi, 0, sizeof(mbi));
@@ -106,6 +109,9 @@ void MemUpdateMap()
     char curMod[MAX_MODULE_SIZE] = "";
     for(int i = pagecount - 1; i > -1; i--)
     {
+        if(!DbgIsDebugging())
+            return;
+
         auto & currentPage = pageVector.at(i);
         if(!currentPage.info[0] || (scmp(curMod, currentPage.info) && !bListAllPages)) //there is a module
             continue; //skip non-modules
@@ -147,7 +153,7 @@ void MemUpdateMap()
         {
             duint start = (duint)currentPage.mbi.BaseAddress;
             duint end = start + currentPage.mbi.RegionSize;
-            for(int j = 0, k = 0; j < SectionNumber; j++)
+            for(duint j = 0, k = 0; (j < (duint)SectionNumber) && (k + IMAGE_SIZEOF_SHORT_NAME < MAX_MODULE_SIZE); j++)
             {
                 const auto & currentSection = sections.at(j);
                 duint secStart = currentSection.addr;
@@ -174,6 +180,7 @@ void MemUpdateMap()
     // Get a list of threads for information about Kernel/PEB/TEB/Stack ranges
     THREADLIST threadList;
     ThreadGetList(&threadList);
+    auto pebBase = (duint)GetPEBLocation(fdProcessInfo->hProcess);
 
     for(auto & page : pageVector)
     {
@@ -184,6 +191,13 @@ void MemUpdateMap()
         if(pageBase == 0x7FFE0000)
         {
             strcpy_s(page.info, "KUSER_SHARED_DATA");
+            continue;
+        }
+
+        // Mark PEB
+        if(pageBase == pebBase)
+        {
+            strcpy_s(page.info, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "PEB")));
             continue;
         }
 
@@ -212,7 +226,7 @@ void MemUpdateMap()
                     sprintf_s(page.info, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Thread %X WoW64 TEB")), threadId);
                     break;
                 }
-#endif // ndef _WIN64
+#endif //_WIN64
             }
 
             // Mark stack
@@ -323,7 +337,7 @@ bool MemoryReadSafePage(HANDLE hProcess, LPVOID lpBaseAddress, LPVOID lpBuffer, 
 
 bool MemRead(duint BaseAddress, void* Buffer, duint Size, duint* NumberOfBytesRead, bool cache)
 {
-    if(!MemIsCanonicalAddress(BaseAddress))
+    if(!MemIsCanonicalAddress(BaseAddress) || !DbgIsDebugging())
         return false;
 
     if(cache && !MemIsValidReadPtr(BaseAddress, true))
@@ -375,7 +389,7 @@ bool MemReadUnsafePage(HANDLE hProcess, LPVOID lpBaseAddress, LPVOID lpBuffer, S
 
 bool MemReadUnsafe(duint BaseAddress, void* Buffer, duint Size, duint* NumberOfBytesRead)
 {
-    if(!MemIsCanonicalAddress(BaseAddress) || BaseAddress < PAGE_SIZE)
+    if(!MemIsCanonicalAddress(BaseAddress) || BaseAddress < PAGE_SIZE || !DbgIsDebugging())
         return false;
 
     if(!Buffer || !Size)
