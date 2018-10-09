@@ -33,7 +33,7 @@ AbstractTableView::AbstractTableView(QWidget* parent)
     // Class variable initialization
     mTableOffset = 0;
     mPrevTableOffset = mTableOffset + 1;
-    Header_t data;
+    Header data;
     data.isVisible = true;
     data.height = 20;
     data.activeButtonIndex = -1;
@@ -90,9 +90,9 @@ AbstractTableView::AbstractTableView(QWidget* parent)
 
     // Slots
     connect(verticalScrollBar(), SIGNAL(actionTriggered(int)), this, SLOT(vertSliderActionSlot(int)));
-    connect(Config(), SIGNAL(colorsUpdated()), this, SLOT(slot_updateColors()));
-    connect(Config(), SIGNAL(fontsUpdated()), this, SLOT(slot_updateFonts()));
-    connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(slot_updateShortcuts()));
+    connect(Config(), SIGNAL(colorsUpdated()), this, SLOT(updateColorsSlot()));
+    connect(Config(), SIGNAL(fontsUpdated()), this, SLOT(updateFontsSlot()));
+    connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(updateShortcutsSlot()));
 
     // todo: try Qt::QueuedConnection to init
     Initialize();
@@ -102,7 +102,7 @@ AbstractTableView::~AbstractTableView()
 {
 }
 
-void AbstractTableView::slot_close()
+void AbstractTableView::closeSlot()
 {
     if(ConfigBool("Gui", "SaveColumnOrder"))
         saveColumnToConfig();
@@ -125,11 +125,11 @@ void AbstractTableView::Initialize()
 
 void AbstractTableView::updateColors()
 {
-    backgroundColor = ConfigColor("AbstractTableViewBackgroundColor");
-    textColor = ConfigColor("AbstractTableViewTextColor");
-    separatorColor = ConfigColor("AbstractTableViewSeparatorColor");
-    headerTextColor = ConfigColor("AbstractTableViewHeaderTextColor");
-    selectionColor = ConfigColor("AbstractTableViewSelectionColor");
+    mBackgroundColor = ConfigColor("AbstractTableViewBackgroundColor");
+    mTextColor = ConfigColor("AbstractTableViewTextColor");
+    mSeparatorColor = ConfigColor("AbstractTableViewSeparatorColor");
+    mHeaderTextColor = ConfigColor("AbstractTableViewHeaderTextColor");
+    mSelectionColor = ConfigColor("AbstractTableViewSelectionColor");
     mHeaderButtonSytle.setStyleSheet(QString(" QPushButton {\n     background-color: %1;\n     border-style: outset;\n     border-width: 2px;\n     border-color: rgb(128, 128, 128);\n }\n QPushButton:pressed {\n     background-color: %1;\n     border-style: inset;\n }")
                                      .arg(ConfigColor("AbstractTableViewHeaderTextBackgroundColor").name()));
 }
@@ -147,17 +147,17 @@ void AbstractTableView::invalidateCachedFont()
     mFontMetrics = new CachedFontMetrics(this, font());
 }
 
-void AbstractTableView::slot_updateColors()
+void AbstractTableView::updateColorsSlot()
 {
     updateColors();
 }
 
-void AbstractTableView::slot_updateFonts()
+void AbstractTableView::updateFontsSlot()
 {
     updateFonts();
 }
 
-void AbstractTableView::slot_updateShortcuts()
+void AbstractTableView::updateShortcutsSlot()
 {
     updateShortcuts();
 }
@@ -178,7 +178,7 @@ void AbstractTableView::loadColumnFromConfig(const QString & viewName)
             mColumnOrder[i] = order - 1;
     }
     mViewName = viewName;
-    connect(Bridge::getBridge(), SIGNAL(close()), this, SLOT(slot_close()));
+    connect(Bridge::getBridge(), SIGNAL(close()), this, SLOT(closeSlot()));
 }
 
 void AbstractTableView::saveColumnToConfig()
@@ -260,7 +260,7 @@ void AbstractTableView::paintEvent(QPaintEvent* event)
     }
 
     // Paints background
-    wPainter.fillRect(wPainter.viewport(), QBrush(backgroundColor));
+    wPainter.fillRect(wPainter.viewport(), QBrush(mBackgroundColor));
 
     // Paints header
     if(mHeader.isVisible == true)
@@ -282,7 +282,7 @@ void AbstractTableView::paintEvent(QPaintEvent* event)
 
             mHeaderButtonSytle.style()->drawControl(QStyle::CE_PushButton, &wOpt, &wPainter, &mHeaderButtonSytle);
 
-            wPainter.setPen(headerTextColor);
+            wPainter.setPen(mHeaderTextColor);
             wPainter.drawText(QRect(x + 4, y, width - 8, getHeaderHeight()), Qt::AlignVCenter | Qt::AlignLeft, mColumnList[i].title);
 
             x += width;
@@ -311,7 +311,7 @@ void AbstractTableView::paintEvent(QPaintEvent* event)
 
                     if(wStr.length())
                     {
-                        wPainter.setPen(textColor);
+                        wPainter.setPen(mTextColor);
                         wPainter.drawText(QRect(x + 4, y, getColumnWidth(j) - 4, getRowHeight()), Qt::AlignVCenter | Qt::AlignLeft, wStr);
                     }
                 }
@@ -320,7 +320,7 @@ void AbstractTableView::paintEvent(QPaintEvent* event)
             if(getColumnCount() > 1)
             {
                 // Paints cell right borders
-                wPainter.setPen(separatorColor);
+                wPainter.setPen(mSeparatorColor);
                 wPainter.drawLine(x + getColumnWidth(j) - 1, y, x + getColumnWidth(j) - 1, y + getRowHeight() - 1);
             }
 
@@ -614,6 +614,7 @@ void AbstractTableView::resizeEvent(QResizeEvent* event)
     if(event->size().height() != event->oldSize().height())
     {
         updateScrollBarRange(getRowCount());
+        emit viewableRowsChanged(getViewableRowsCount());
         mShouldReload = true;
     }
     QWidget::resizeEvent(event);
@@ -813,7 +814,8 @@ dsint AbstractTableView::scaleFromScrollBarRangeToUint64(int value)
  */
 void AbstractTableView::updateScrollBarRange(dsint range)
 {
-    dsint wMax = range - getViewableRowsCount() + 1;
+    int viewableRowsCount = getViewableRowsCount();
+    dsint wMax = range - viewableRowsCount + 1;
 
     if(wMax > 0)
     {
@@ -853,7 +855,7 @@ void AbstractTableView::updateScrollBarRange(dsint range)
     else
         verticalScrollBar()->setRange(0, 0);
     verticalScrollBar()->setSingleStep(getRowHeight());
-    verticalScrollBar()->setPageStep(getViewableRowsCount() * getRowHeight());
+    verticalScrollBar()->setPageStep(viewableRowsCount * getRowHeight());
 }
 
 /************************************************************************************
@@ -866,7 +868,7 @@ void AbstractTableView::updateScrollBarRange(dsint range)
  *
  * @return      row index offset.
  */
-int AbstractTableView::getIndexOffsetFromY(int y)
+int AbstractTableView::getIndexOffsetFromY(int y) const
 {
     return (y / getRowHeight());
 }
@@ -878,7 +880,7 @@ int AbstractTableView::getIndexOffsetFromY(int y)
  *
  * @return      Column index.
  */
-int AbstractTableView::getColumnIndexFromX(int x)
+int AbstractTableView::getColumnIndexFromX(int x) const
 {
     int wX = -horizontalScrollBar()->value();
     int wColIndex = 0;
@@ -946,7 +948,7 @@ int AbstractTableView::getColumnDisplayIndexFromX(int x)
  *
  * @return      X coordinate of the column index.
  */
-int AbstractTableView::getColumnPosition(int index)
+int AbstractTableView::getColumnPosition(int index) const
 {
     int posX = -horizontalScrollBar()->value();
 
@@ -970,7 +972,7 @@ int AbstractTableView::getColumnPosition(int index)
  *
  * @return      y - getHeaderHeight().
  */
-int AbstractTableView::transY(int y)
+int AbstractTableView::transY(int y) const
 {
     return y - getHeaderHeight();
 }
@@ -980,14 +982,13 @@ int AbstractTableView::transY(int y)
  *
  * @return      Number of viewable rows.
  */
-int AbstractTableView::getViewableRowsCount()
+int AbstractTableView::getViewableRowsCount() const
 {
     int wTableHeight = this->viewport()->height() - getHeaderHeight();
     int wCount = wTableHeight / getRowHeight();
 
     wCount += (wTableHeight % getRowHeight()) > 0 ? 1 : 0;
 
-    emit viewableRows(wCount);
     return wCount;
 }
 
@@ -996,7 +997,7 @@ int AbstractTableView::getViewableRowsCount()
  *
  * @return      Number of remaining lines to print.
  */
-int AbstractTableView::getLineToPrintcount()
+int AbstractTableView::getLineToPrintcount() const
 {
     int wViewableRowsCount = getViewableRowsCount();
     dsint wRemainingRowsCount = getRowCount() - mTableOffset;
@@ -1012,13 +1013,12 @@ int AbstractTableView::getLineToPrintcount()
  *
  * @param[in]   width           Width of the column in pixel
  * @param[in]   isClickable     Boolean that tells whether the header is clickable or not
- * @param[in]   sortFn          The sort function to use for this column. Defaults to case insensitve text search
  * @return      Nothing.
  */
-void AbstractTableView::addColumnAt(int width, const QString & title, bool isClickable, SortBy::t sortFn)
+void AbstractTableView::addColumnAt(int width, const QString & title, bool isClickable)
 {
-    HeaderButton_t wHeaderButton;
-    Column_t wColumn;
+    HeaderButton wHeaderButton;
+    Column wColumn;
     int wCurrentCount;
 
     // Fix invisible columns near the edge of the screen
@@ -1033,7 +1033,6 @@ void AbstractTableView::addColumnAt(int width, const QString & title, bool isCli
     wColumn.width = width;
     wColumn.hidden = false;
     wColumn.title = title;
-    wColumn.sortFunction = sortFn;
     wCurrentCount = mColumnList.length();
     mColumnList.append(wColumn);
     mColumnOrder.append(wCurrentCount);
@@ -1057,13 +1056,13 @@ void AbstractTableView::setColTitle(int index, const QString & title)
 {
     if(mColumnList.size() > 0 && index >= 0 && index < mColumnList.size())
     {
-        Column_t wColum = mColumnList.takeAt(index);
-        wColum.title = title;
-        mColumnList.insert(index - 1, wColum);
+        Column wColumn = mColumnList.takeAt(index);
+        wColumn.title = title;
+        mColumnList.insert(index - 1, wColumn);
     }
 }
 
-QString AbstractTableView::getColTitle(int index)
+QString AbstractTableView::getColTitle(int index) const
 {
     if(mColumnList.size() > 0 && index >= 0 && index < mColumnList.size())
         return mColumnList[index].title;
@@ -1083,12 +1082,12 @@ int AbstractTableView::getColumnCount() const
     return mColumnList.size();
 }
 
-int AbstractTableView::getRowHeight()
+int AbstractTableView::getRowHeight() const
 {
     return mFontMetrics->height() | 1;
 }
 
-int AbstractTableView::getColumnWidth(int index)
+int AbstractTableView::getColumnWidth(int index) const
 {
     if(index < 0)
         return -1;
@@ -1097,7 +1096,7 @@ int AbstractTableView::getColumnWidth(int index)
     return 0;
 }
 
-bool AbstractTableView::getColumnHidden(int col)
+bool AbstractTableView::getColumnHidden(int col) const
 {
     if(col < 0)
         return true;
@@ -1105,13 +1104,6 @@ bool AbstractTableView::getColumnHidden(int col)
         return mColumnList[col].hidden;
     else
         return true;
-}
-
-AbstractTableView::SortBy::t AbstractTableView::getColumnSortBy(int col) const
-{
-    if(col < getColumnCount() && col >= 0)
-        return mColumnList[col].sortFunction;
-    return SortBy::AsText;
 }
 
 void AbstractTableView::setColumnHidden(int col, bool hidden)
@@ -1140,12 +1132,12 @@ void AbstractTableView::setColumnOrder(int pos, int index)
         mColumnOrder[pos] = index - 1;
 }
 
-int AbstractTableView::getColumnOrder(int index)
+int AbstractTableView::getColumnOrder(int index) const
 {
     return mColumnOrder[index] + 1;
 }
 
-int AbstractTableView::getHeaderHeight()
+int AbstractTableView::getHeaderHeight() const
 {
     if(mHeader.isVisible == true)
         return mHeader.height;
@@ -1153,17 +1145,17 @@ int AbstractTableView::getHeaderHeight()
         return 0;
 }
 
-int AbstractTableView::getTableHeight()
+int AbstractTableView::getTableHeight() const
 {
     return this->viewport()->height() - getHeaderHeight();
 }
 
-int AbstractTableView::getGuiState()
+int AbstractTableView::getGuiState() const
 {
     return mGuiState;
 }
 
-int AbstractTableView::getNbrOfLineToPrint()
+int AbstractTableView::getNbrOfLineToPrint() const
 {
     return mNbrOfLineToPrint;
 }
@@ -1178,7 +1170,7 @@ void AbstractTableView::setShowHeader(bool show)
     mHeader.isVisible = show;
 }
 
-int AbstractTableView::getCharWidth()
+int AbstractTableView::getCharWidth() const
 {
     return QFontMetrics(this->font()).width(QChar(' '));
 }
@@ -1187,7 +1179,7 @@ int AbstractTableView::getCharWidth()
                            Content drawing control
 ************************************************************************************/
 
-bool AbstractTableView::getDrawDebugOnly()
+bool AbstractTableView::getDrawDebugOnly() const
 {
     return mDrawDebugOnly;
 }
@@ -1197,10 +1189,20 @@ void AbstractTableView::setDrawDebugOnly(bool value)
     mDrawDebugOnly = value;
 }
 
+void AbstractTableView::setAllowPainting(bool allow)
+{
+    mAllowPainting = allow;
+}
+
+bool AbstractTableView::getAllowPainting() const
+{
+    return mAllowPainting;
+}
+
 /************************************************************************************
                            Table offset management
 ************************************************************************************/
-dsint AbstractTableView::getTableOffset()
+dsint AbstractTableView::getTableOffset() const
 {
     return mTableOffset;
 }
@@ -1256,32 +1258,4 @@ void AbstractTableView::prepareData()
     int wViewableRowsCount = getViewableRowsCount();
     dsint wRemainingRowsCount = getRowCount() - mTableOffset;
     mNbrOfLineToPrint = (dsint)wRemainingRowsCount > (dsint)wViewableRowsCount ? (int)wViewableRowsCount : (int)wRemainingRowsCount;
-}
-
-bool AbstractTableView::SortBy::AsText(const QString & a, const QString & b)
-{
-    auto i = QString::compare(a, b);
-    if(i < 0)
-        return true;
-    if(i > 0)
-        return false;
-    return duint(&a) < duint(&b);
-}
-
-bool AbstractTableView::SortBy::AsInt(const QString & a, const QString & b)
-{
-    if(a.toLongLong() < b.toLongLong())
-        return true;
-    if(a.toLongLong() > b.toLongLong())
-        return false;
-    return duint(&a) < duint(&b);
-}
-
-bool AbstractTableView::SortBy::AsHex(const QString & a, const QString & b)
-{
-    if(a.toLongLong(0, 16) < b.toLongLong(0, 16))
-        return true;
-    if(a.toLongLong(0, 16) > b.toLongLong(0, 16))
-        return false;
-    return duint(&a) < duint(&b);
 }
